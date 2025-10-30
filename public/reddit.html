@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Reddit Explorer – EchoFlow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <nav class="topnav">
+    <a href="./index.html" class="logo">← EchoFlow</a>
+    <span class="nav-title">Reddit Explorer</span>
+  </nav>
+
+  <div class="container">
+    <form id="searchForm">
+      <div class="grid">
+        <label>
+          Subreddits (comma-separated)
+          <input type="text" id="subreddits" placeholder="bitcoin,CryptoCurrency" required />
+        </label>
+
+        <label>
+          Mode
+          <select id="mode">
+            <option value="latest" selected>Latest (newest posts)</option>
+            <option value="top">Top (highest scored)</option>
+            <option value="search">Search (by keyword)</option>
+          </select>
+        </label>
+
+        <label id="keywordWrap" class="hidden">
+          Keyword (search mode only)
+          <input type="text" id="keyword" placeholder="ETF, Lightning, etc." />
+        </label>
+
+        <label id="timeRangeWrap">
+          Time Range
+          <select id="timeRange">
+            <option value="day" selected>Day</option>
+            <option value="hour">Hour</option>
+            <option value="week">Week</option>
+            <option value="month">Month</option>
+            <option value="year">Year</option>
+            <option value="all">All Time</option>
+          </select>
+        </label>
+
+        <label>
+          Posts per subreddit (limit)
+          <input type="number" id="limit" min="1" max="100" value="25" />
+        </label>
+
+        <fieldset class="full-width">
+          <legend>Sort posts</legend>
+          <label><input type="radio" name="postSort" value="" checked /> None</label>
+          <label><input type="radio" name="postSort" value="likes" /> Top liked (score)</label>
+          <label><input type="radio" name="postSort" value="comments" /> Most commented</label>
+          <label><input type="radio" name="postSort" value="recent" /> Newest</label>
+        </fieldset>
+
+        <fieldset class="full-width">
+          <legend>Engagement filter</legend>
+          <label>
+            Min score
+            <input type="number" id="minEngagement" min="0" step="1" placeholder="e.g. 50" />
+          </label>
+        </fieldset>
+
+        <fieldset class="full-width">
+          <legend>Comments</legend>
+          <label><input type="checkbox" id="fetchComments" /> Include comments</label>
+          <label>
+            Count
+            <input type="number" id="commentLimit" min="1" max="50" value="5" />
+          </label>
+          <label>
+            Sort
+            <select id="commentSort">
+              <option value="top" selected>Top</option>
+              <option value="best">Best</option>
+              <option value="new">New</option>
+            </select>
+          </label>
+        </fieldset>
+      </div>
+
+      <div class="actions">
+        <label style="display:flex;align-items:center;gap:.5rem;">
+          <input type="checkbox" id="persistToggle" />
+          Save results to database
+        </label>
+        <button type="submit">Run</button>
+        <button type="button" id="viewHtml">Open HTML View</button>
+        <button type="button" id="downloadCsv">Download CSV</button>
+      </div>
+    </form>
+
+    <div id="status" class="status"></div>
+
+    <div id="results" class="results"></div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
