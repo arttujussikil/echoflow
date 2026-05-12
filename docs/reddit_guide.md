@@ -1,320 +1,206 @@
-# Reddit Collection Guide
+# EchoFlow – Multi-Platform Search Guide
 
-This guide covers how EchoFlow collects and processes Reddit data.
-
-## Overview
-
-EchoFlow uses Reddit's public JSON API (no authentication required) to fetch posts and comments from any subreddit. You can search by keyword, browse top posts, or get the latest content.
-
-## How It Works
-
-### 1. Data Collection
-
-**RedditCollector** (`src/collectors/reddit-collector.ts`) handles all Reddit API calls:
-
-- `search(keyword, timeRange, opts)` – Keyword search with time filtering
-- `fetchLatest(subreddit, limit)` – Newest posts from /new
-- `fetchTop(subreddit, timeRange, limit)` – Highest-scored posts from /top
-- `fetchCommentsBy(subreddit, postId, opts)` – Load comments for a specific post
-
-**Rate Limiting:**
-- Reddit allows ~60 requests/minute without OAuth
-- Comment fetching adds 1.2s delay between posts to avoid 429 errors
-
-### 2. Search Modes
-
-#### **Latest Mode**
-Fetches newest posts from subreddit(s), ignoring time range and keywords.
-
-**Use case:** Monitor recent activity in r/bitcoin
-
-**API endpoint:**
-```
-GET https://reddit.com/r/{subreddit}/new.json?limit=50
-```
-
-**Example request:**
-```json
-{
-  "mode": "latest",
-  "platforms": ["reddit"],
-  "subreddits": ["bitcoin", "ethereum"],
-  "limit": 25
-}
-```
+This guide covers how EchoFlow collects data from each supported platform, the unified API, and how to extend it with new platforms.
 
 ---
 
-#### **Top Mode**
-Fetches highest-scored posts within a time range (no keyword needed).
+## Supported Platforms
 
-**Use case:** Find viral posts from the past year in r/CryptoCurrency
+| Platform | API | Auth | Search | Latest | Top | Comments |
+|---|---|---|---|---|---|---|
+| Reddit | reddit.com JSON API | None | Yes | Yes | Yes | Yes |
+| Hacker News | Algolia HN Search API | None | Yes | Yes | Yes | Yes |
 
-**API endpoint:**
-```
-GET https://reddit.com/r/{subreddit}/top.json?t=year&limit=50
-```
+All platforms are free and require no credentials.
 
-**Time ranges:** hour, day, week, month, year, all
+---
 
-**Example request:**
+## Unified Search API
+
+**Endpoint:** `POST /api/search`
+
+All platforms share the same request format:
+
 ```json
 {
+  "platforms": ["reddit", "hackernews"],
   "mode": "top",
+  "channels": ["programming", "typescript"],
+  "timeRange": "week",
+  "limit": 25,
+  "fetchComments": false,
+  "commentLimit": 5,
+  "commentSort": "top",
+  "filters": {
+    "minEngagement": 50,
+    "sortBy": "comments"
+  },
+  "persist": false
+}
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `platforms` | string[] | `["reddit"]` | Platform IDs to query |
+| `mode` | `search` \| `latest` \| `top` | `search` | Collection mode |
+| `keyword` | string | — | Required for `mode: search` |
+| `channels` | string[] | `[]` | Subreddits (Reddit) or tags (HN) |
+| `timeRange` | string | `day` | `hour`, `day`, `week`, `month`, `year`, `all` |
+| `limit` | number | `50` | Results per platform |
+| `fetchComments` | boolean | `false` | Fetch top comments for each post |
+| `commentLimit` | number | `10` | Comments per post |
+| `commentSort` | string | `top` | `top`, `best`, `new` |
+| `filters.minEngagement` | number | — | Exclude posts below this score |
+| `filters.sortBy` | string | — | `likes`, `comments`, `recent` |
+| `persist` | boolean | `false` | Save results to the database |
+
+### Response
+
+```json
+{
+  "results": [...],
+  "totalResults": 47,
+  "platforms": ["reddit", "hackernews"],
+  "mode": "top",
+  "timeRange": "week",
+  "channels": ["programming"],
+  "platformErrors": {}
+}
+```
+
+If one platform fails, its error is recorded in `platformErrors` and results from the working platforms are still returned.
+
+---
+
+## Platform Details
+
+### Reddit
+
+Uses Reddit's public JSON API — no API key, no OAuth.
+
+**Rate limits:** ~60 requests/minute without auth. Comment fetching adds 1.2 s between posts.
+
+**`channels` field:** subreddit names (without `r/`).
+
+```json
+{
   "platforms": ["reddit"],
-  "subreddits": ["CryptoCurrency"],
-  "timeRange": "year",
+  "mode": "top",
+  "channels": ["worldnews", "technology"],
+  "timeRange": "week",
   "limit": 50
 }
 ```
 
----
-
-#### **Search Mode**
-Keyword-based search with time filtering. Searches post titles and content.
-
-**Use case:** Find all mentions of "ETF" in r/bitcoin from the past month
-
-**API endpoint:**
-```
-GET https://reddit.com/r/{subreddit}/search.json?q=ETF&t=month&restrict_sr=1
-```
-
-**Example request:**
+**Search mode** — keyword search within subreddits:
 ```json
 {
-  "mode": "search",
-  "keyword": "ETF",
   "platforms": ["reddit"],
-  "subreddits": ["bitcoin"],
-  "timeRange": "month",
-  "limit": 100
+  "mode": "search",
+  "keyword": "AI regulation",
+  "channels": ["technology", "Futurology"],
+  "timeRange": "month"
 }
 ```
 
-**Note:** If no subreddits specified, searches all of Reddit (slower, less focused).
+If `channels` is empty for search mode, Reddit searches all of r/all.
 
 ---
 
-### 3. Filtering & Sorting
+### Hacker News (via Algolia)
 
-**Post-collection filters** applied after fetching:
+Uses the [HN Algolia Search API](https://hn.algolia.com/api) — free, public, no key required.
 
-- **Min engagement** – Only show posts with score ≥ N
-- **Sort by:**
-  - `likes` – Highest score first
-  - `comments` – Most commented first
-  - `recent` – Newest first
+**`channels` field:** Algolia tag filters. Valid values:
+- `story` (default — link and text posts)
+- `ask_hn`
+- `show_hn`
+- `job`
 
-**Example:**
 ```json
 {
-  "mode": "top",
-  "subreddits": ["bitcoin"],
-  "timeRange": "week",
-  "filters": {
-    "minEngagement": 100,
-    "sortBy": "comments"
-  }
-}
-```
-
----
-
-### 4. Comment Loading
-
-**Two approaches:**
-
-#### A. Bulk Fetch (Initial Request)
-Set `fetchComments: true` to load comments for all posts upfront.
-
-**Pros:** All data in one response  
-**Cons:** Slow for many posts (1.2s × post count)
-
-**Example:**
-```json
-{
+  "platforms": ["hackernews"],
   "mode": "latest",
-  "subreddits": ["bitcoin"],
-  "limit": 10,
-  "fetchComments": true,
-  "commentLimit": 5,
-  "commentSort": "top"
+  "channels": ["story", "ask_hn"],
+  "limit": 30
 }
 ```
 
-#### B. On-Demand (UI)
-Click "Comments" in the web UI to load them lazily.
-
-**Endpoint:** `POST /api/reddit/comments`
-
-**Request body:**
+**Search mode:**
 ```json
 {
-  "subreddit": "bitcoin",
-  "id": "abc123",
-  "limit": 10,
-  "sort": "best"
+  "platforms": ["hackernews"],
+  "mode": "search",
+  "keyword": "TypeScript",
+  "channels": ["story"],
+  "timeRange": "week"
 }
 ```
 
-**Comment sorts:**
-- `top` – Highest scored
-- `best` – Reddit's "best" algorithm (uses `confidence` param)
-- `new` – Most recent
-
----
-
-### 5. Data Structure
-
-**Post Object:**
-```typescript
-{
-  id: string;              // Reddit post ID
-  platform: "reddit";
-  title: string;
-  content: string;         // Selftext or title
-  author: string;
-  url: string;             // Direct link to post
-  createdAt: Date;
-  engagement: {
-    likes: number;         // Upvotes
-    comments: number;      // Comment count
-    shares: 0;            // Reddit doesn't expose shares
-    score: number;        // Net upvotes (ups - downs)
-  };
-  metadata: {
-    subreddit: string;
-    flair?: string;
-    isNSFW: boolean;
-  };
-  comments?: Comment[];   // Optional
-}
-```
-
-**Comment Object:**
-```typescript
-{
-  id: string;
-  author: string;
-  body: string;           // Comment text
-  score: number;
-  createdAt: Date;
-}
-```
-
----
-
-### 6. Export Formats
-
-#### JSON (Default)
-```bash
-curl -X POST http://localhost:3000/api/search \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"top","subreddits":["bitcoin"],"timeRange":"week"}'
-```
-
-#### Pretty JSON
-Add `?pretty=1`:
-```bash
-curl "http://localhost:3000/api/search?pretty=1" \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"latest","subreddits":["bitcoin"],"limit":5}'
-```
-
-#### CSV
-Add `?format=csv`:
-```bash
-curl "http://localhost:3000/api/search?format=csv" \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"top","subreddits":["bitcoin"],"timeRange":"month"}' > reddit.csv
-```
-
-**CSV Columns:**
-id, platform, title, content, author, url, createdAt, likes, comments_count, shares, score, subreddit, flair, isNSFW, top_comments
-
-#### HTML
-Add `?format=html` for a scrollable table view:
-```bash
-curl "http://localhost:3000/api/search?format=html" \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"top","subreddits":["bitcoin"],"timeRange":"year"}' > view.html
-```
-
----
-
-## Web UI Walkthrough
-
-**URL:** `http://localhost:3000/ui/`
-
-### Step-by-Step
-
-1. **Enter subreddits**  
-   Type comma-separated names: `bitcoin,ethereum,CryptoCurrency`
-
-2. **Choose mode**
-   - Latest → newest posts
-   - Top → highest scored (requires time range)
-   - Search → keyword + time range
-
-3. **Set options**
-   - **Posts per subreddit** – Max results (1-100)
-   - **Time range** – hour/day/week/month/year/all
-   - **Sort posts** – None, top liked, most commented, newest
-   - **Min score** – Filter low-engagement posts
-
-4. **Comments (optional)**
-   - Check "Include comments" to fetch with initial request
-   - Or leave unchecked and click "Comments" per post to load on-demand
-   - **Count** – How many comments per post (1-50)
-   - **Sort** – top, best, new
-
-5. **Run & Export**
-   - **Run** → See results inline (scrollable cards)
-   - **Open HTML View** → New browser tab with table
-   - **Download CSV** → Save to disk for Excel/Sheets
-
----
-
-## Common Use Cases
-
-### Monitor Breaking News
+**Top mode** sorts by score within the time range:
 ```json
 {
-  "mode": "latest",
-  "subreddits": ["worldnews", "news"],
-  "limit": 50,
-  "filters": { "minEngagement": 500 }
-}
-```
-
-### Find Viral Content
-```json
-{
+  "platforms": ["hackernews"],
   "mode": "top",
-  "subreddits": ["videos", "funny"],
+  "timeRange": "day",
+  "limit": 25
+}
+```
+
+---
+
+## Collection Modes
+
+### Latest
+Fetches newest posts, ignoring keywords. Ignores `timeRange`.
+
+```json
+{
+  "platforms": ["reddit", "hackernews"],
+  "mode": "latest",
+  "channels": ["programming"],
+  "limit": 20
+}
+```
+
+### Top
+Fetches highest-scored posts within a time range.
+
+```json
+{
+  "platforms": ["reddit", "hackernews"],
+  "mode": "top",
   "timeRange": "week",
   "limit": 25
 }
 ```
 
-### Track Keyword Over Time
+### Search
+Keyword search. `keyword` is required.
+
 ```json
 {
+  "platforms": ["reddit", "hackernews"],
   "mode": "search",
-  "keyword": "AI regulation",
-  "subreddits": ["technology", "Futurology"],
+  "keyword": "Rust language",
   "timeRange": "month",
-  "filters": { "sortBy": "comments" }
+  "limit": 30
 }
 ```
 
-### Deep Dive with Comments
+---
+
+## Comment Fetching
+
+Enable with `fetchComments: true`. Comments are fetched after the main collection, per platform.
+
 ```json
 {
+  "platforms": ["reddit"],
   "mode": "top",
-  "subreddits": ["AskReddit"],
-  "timeRange": "day",
+  "channels": ["AskReddit"],
   "limit": 10,
   "fetchComments": true,
   "commentLimit": 20,
@@ -322,49 +208,188 @@ curl "http://localhost:3000/api/search?format=html" \
 }
 ```
 
+**Comment sort options:**
+- `top` — highest score
+- `best` — Reddit's confidence algorithm (Reddit only)
+- `new` — most recent
+
+HackerNews comment fetching calls `GET /api/v1/items/<id>` per post (adds ~500 ms per post).
+
 ---
 
-## Limitations
+## Filtering & Sorting
 
-- **No OAuth** – Uses public API only (no user-specific data, private subs)
-- **Rate limits** – ~60 requests/min
-- **Deleted content** – `[deleted]` authors and `[removed]` comments are filtered out
-- **Comment depth** – Only fetches top-level comments (no nested replies)
-- **NSFW** – Included by default; filter via `metadata.isNSFW` if needed
+Applied after collection, across all platforms:
+
+```json
+{
+  "filters": {
+    "minEngagement": 100,
+    "sortBy": "comments"
+  }
+}
+```
+
+`sortBy` values:
+- `likes` — highest score first
+- `comments` — most comments first
+- `recent` — newest first
+
+---
+
+## Export Formats
+
+### JSON (default)
+```bash
+curl -X POST http://localhost:3000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"platforms":["reddit"],"mode":"top","channels":["bitcoin"],"timeRange":"week"}'
+```
+
+### CSV
+Add `?format=csv` to the URL:
+```bash
+curl "http://localhost:3000/api/search?format=csv" \
+  -H "Content-Type: application/json" \
+  -d '{"platforms":["reddit","hackernews"],"mode":"top","timeRange":"day"}' > results.csv
+```
+
+### HTML
+```bash
+curl "http://localhost:3000/api/search?format=html" \
+  -H "Content-Type: application/json" \
+  -d '{"platforms":["reddit"],"mode":"top","channels":["programming"],"timeRange":"week"}' > view.html
+```
+
+### Pretty JSON
+```bash
+curl "http://localhost:3000/api/search?pretty=1" \
+  -H "Content-Type: application/json" \
+  -d '{"platforms":["hackernews"],"mode":"latest","limit":5}'
+```
+
+---
+
+## AI Analysis
+
+After fetching results, click **Analyze with AI** in the UI (or call the API directly):
+
+```bash
+curl -X POST http://localhost:3000/api/analytics/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"posts": [...], "keyword": "TypeScript"}'
+```
+
+Returns:
+```json
+{
+  "sentiment": {"positive": 55, "neutral": 30, "negative": 15},
+  "themes": ["performance", "type safety", "tooling", "adoption"],
+  "summary": "Developers discuss TypeScript's ergonomics...",
+  "mood": "curious",
+  "insights": ["Performance is the top concern.", "Migration from JS is a common topic."],
+  "postCount": 25,
+  "analyzedAt": "2026-05-12T10:00:00.000Z"
+}
+```
+
+Check AI status:
+```bash
+curl http://localhost:3000/api/analytics/status
+```
+
+---
+
+## Common Use Cases
+
+### Monitor breaking news across platforms
+```json
+{
+  "platforms": ["reddit", "hackernews"],
+  "mode": "latest",
+  "channels": ["worldnews"],
+  "limit": 50,
+  "filters": {"minEngagement": 100}
+}
+```
+
+### Track a keyword across all tech communities
+```json
+{
+  "platforms": ["reddit", "hackernews"],
+  "mode": "search",
+  "keyword": "Rust language",
+  "channels": ["programming", "story"],
+  "timeRange": "month",
+  "filters": {"sortBy": "comments"}
+}
+```
+
+### Deep-dive with comments for AI analysis
+```json
+{
+  "platforms": ["reddit", "hackernews"],
+  "mode": "top",
+  "timeRange": "week",
+  "limit": 15,
+  "fetchComments": true,
+  "commentLimit": 10
+}
+```
+
+---
+
+## Adding a New Platform
+
+1. Create `src/collectors/my-platform-collector.ts`:
+
+```ts
+import { BaseCollector, CollectorCapabilities, SearchOptions } from './base-collector';
+import { Post } from '../models/post';
+
+export class MyPlatformCollector extends BaseCollector {
+  readonly platformId = 'myplatform';
+  readonly displayName = 'My Platform';
+  readonly capabilities: CollectorCapabilities = {
+    search: true, latest: true, top: false, comments: false, requiresAuth: false
+  };
+
+  async search(keyword: string | null, options: SearchOptions = {}): Promise<Post[]> {
+    // fetch from your API, transform to Post[]
+    return this.validatePosts(raw);
+  }
+}
+```
+
+2. Register it in `src/collectors/index.ts`:
+```ts
+import { MyPlatformCollector } from './my-platform-collector';
+registry.register(new MyPlatformCollector());
+```
+
+3. Rebuild Docker: `docker compose up --build`
+
+The platform chip appears in the UI automatically — no frontend changes needed.
 
 ---
 
 ## Troubleshooting
 
-**"No results" but posts exist:**
-- Check time range (e.g., "hour" in a slow subreddit)
-- Try "all" time range or switch to "latest" mode
-- Verify subreddit name (case-insensitive but must be exact)
+**No results from HackerNews:**
+- `latest` mode defaults to `story` tag — try without `channels` filter first
+- `search` mode requires a keyword; empty keywords fall back to latest
 
-**Comments show "Loading..." forever:**
-- Open DevTools → Network → Check for 429 (rate limit)
-- Reduce `commentLimit` or increase delays
-- Reddit may throttle repeated requests; wait 30s and retry
+**Reddit rate limit (429):**
+- Wait ~60 seconds and retry
+- Reduce `limit` or disable comment fetching
+
+**Platform shows `platformErrors` but not failure:**
+- Expected behaviour — partial results are returned from working platforms
+- Check `platformErrors[platformId]` for the specific error message
 
 **CSV opens garbled in Excel:**
-- Save as UTF-8
-- Use "Data → From Text/CSV" import wizard
+- Use "Data → From Text/CSV" import wizard and select UTF-8
 
-**HTML view is blank:**
-- Ensure format=html in query string
-- Check browser console for JS errors
-
----
-
-## API Endpoints Reference
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/search` | POST | Main search (all modes) |
-| `/api/reddit/comments` | POST | Fetch comments for a specific post |
-
-**Common Query Params:**
-- `?format=json` (default), `csv`, `html`
-- `?pretty=1` – Pretty-print JSON
-
----
+**Only Reddit shows in UI platform picker:**
+- Docker image may be stale — run `docker compose up --build`
+- Hard-refresh the browser with Ctrl+Shift+R to bypass cached JS
