@@ -271,11 +271,16 @@ function renderAI(a) {
   const insights = (a.insights || [])
     .map(i => `<li>${escapeHtml(i)}</li>`).join('');
 
+  const providerLabel = a.provider
+    ? (a.provider.startsWith('nvidia') ? '⚡ NVIDIA NIM' : '🖥 Ollama')
+    : '';
+
   aiContent.innerHTML = `
     <div class="ai-status-row">
       <span>${escapeHtml(String(a.postCount))} posts analysed</span>
       <span style="color:var(--line)">·</span>
       <span class="mood-badge" style="background:${moodColor}22;color:${moodColor}">${escapeHtml(a.mood)}</span>
+      ${providerLabel ? `<span style="margin-left:auto;font-size:11px;color:var(--muted);opacity:0.7">${providerLabel}</span>` : ''}
     </div>
 
     <div class="ai-section">
