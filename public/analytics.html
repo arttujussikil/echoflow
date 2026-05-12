@@ -5,119 +5,192 @@
   <title>Analytics Dashboard – EchoFlow</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./styles.css" />
+  <style>
+    /* Platform chips */
+    .platform-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .platform-chip {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 12px; cursor: pointer;
+      font-size: 13px; color: var(--muted); transition: all 0.15s;
+      user-select: none;
+    }
+    .platform-chip input { display: none; }
+    .platform-chip:hover { border-color: var(--accent); color: var(--fg); }
+    .platform-chip.selected { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+    .platform-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background 0.15s; }
+    .platform-chip.selected .dot { background: var(--accent); }
+
+    /* AI insights panel */
+    .ai-insights-card {
+      background: var(--card); border: 1px solid rgba(139,92,246,0.35);
+      border-radius: 12px; padding: 20px; margin-top: 8px;
+    }
+    .ai-insights-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .ai-insights-header h3 { margin: 0; font-size: 15px; }
+    .ai-status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 13px; color: var(--muted); }
+    .mood-badge {
+      display: inline-block; padding: 3px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 700; text-transform: capitalize;
+    }
+    .ai-sub-section { margin-bottom: 16px; }
+    .ai-sub-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .themes { display: flex; flex-wrap: wrap; gap: 7px; }
+    .theme-chip {
+      background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.2);
+      color: var(--accent); padding: 3px 10px; border-radius: 20px; font-size: 12px;
+    }
+    .ai-summary { font-size: 14px; line-height: 1.7; color: var(--fg); margin: 0; }
+    .insights-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
+    .insights-list li {
+      font-size: 13px; padding: 9px 12px;
+      background: rgba(255,255,255,0.03); border-left: 3px solid rgba(139,92,246,0.5);
+      border-radius: 0 6px 6px 0; line-height: 1.5;
+    }
+    .ai-loading { display: flex; align-items: center; gap: 12px; padding: 16px 0; color: var(--muted); font-size: 14px; }
+    .ai-error { padding: 12px; color: #fca5a5; font-size: 13px; line-height: 1.5; background: rgba(239,68,68,0.05); border-radius: 8px; }
+
+    /* Sentiment section */
+    .s-row { display: grid; grid-template-columns: 80px 1fr 44px; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 10px; }
+    .s-label { color: var(--muted); }
+    .s-track { height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; }
+    .s-fill { height: 100%; border-radius: 5px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+    .s-fill.pos { background: linear-gradient(90deg, #10b981, #059669); }
+    .s-fill.neu { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+    .s-fill.neg { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .s-pct { font-weight: 700; font-size: 13px; color: var(--fg); text-align: right; }
+
+    /* Spinner */
+    .spinner { width: 20px; height: 20px; border: 2px solid rgba(139,92,246,0.3); border-top-color: #8b5cf6; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .full-width { grid-column: 1 / -1; }
+  </style>
 </head>
 <body>
   <nav class="topnav">
     <a href="./index.html" class="logo">← EchoFlow</a>
     <span class="nav-title">Analytics Dashboard</span>
+    <div style="margin-left:auto;display:flex;gap:20px">
+      <a href="./news.html" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:600">News</a>
+      <a href="./reddit.html" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:600">Search</a>
+    </div>
   </nav>
 
   <div class="container analytics-container">
-    <!-- Data Source Selector -->
+    <!-- Data Source -->
     <div class="section-card">
       <h2>📊 Data Source</h2>
       <form id="analyticsForm">
-        <div class="form-row">
+        <div class="grid">
+
+          <!-- Platforms (populated by JS) -->
+          <label class="full-width" style="grid-column:1/-1">
+            Platforms
+            <div id="platformChips" class="platform-chips">
+              <span style="color:var(--muted);font-size:13px">Loading platforms…</span>
+            </div>
+          </label>
+
           <label>
-            Platform
-            <select id="platform">
-              <option value="reddit">Reddit</option>
-              <option value="twitter" disabled>Twitter/X (coming soon)</option>
+            Mode
+            <select id="mode">
+              <option value="top" selected>Top</option>
+              <option value="latest">Latest</option>
+              <option value="search">Search by keyword</option>
             </select>
           </label>
 
-          <label>
-            Subreddits (comma-separated)
-            <input type="text" id="subreddits" placeholder="bitcoin,ethereum" required />
+          <label id="keywordWrap" class="hidden">
+            Keyword
+            <input type="text" id="keyword" placeholder="e.g. Bitcoin, AI, TypeScript" />
           </label>
 
-          <div class="form-group">
-            <label for="timeRange">Time Range</label>
+          <label id="channelsWrap">
+            <span id="channelsLabel">Channels</span>
+            <input type="text" id="channels" placeholder="comma-separated" />
+          </label>
+
+          <label id="timeRangeWrap">
+            Time Range
             <select id="timeRange">
-              <option value="hour">Last Hour</option>
-              <option value="day" selected>Last 24 Hours</option>
-              <option value="week">Last Week</option>
-              <option value="month">Last Month</option>
-              <option value="year">Last Year</option>
+              <option value="hour">Hour</option>
+              <option value="day" selected>Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+              <option value="year">Year</option>
               <option value="all">All Time</option>
             </select>
-          </div>
+          </label>
 
           <label>
-            Min Posts
-            <input type="number" id="minPosts" value="10" min="5" max="100" />
+            Limit (per platform)
+            <input type="number" id="minPosts" value="25" min="5" max="100" />
           </label>
+
+          <fieldset class="full-width">
+            <legend>Sort results</legend>
+            <label><input type="radio" name="postSort" value="" checked /> None</label>
+            <label><input type="radio" name="postSort" value="likes" /> By score</label>
+            <label><input type="radio" name="postSort" value="comments" /> By comments</label>
+            <label><input type="radio" name="postSort" value="recent" /> By date</label>
+          </fieldset>
+
+          <fieldset class="full-width">
+            <legend>
+              <label><input type="checkbox" id="fetchComments" /> Fetch Comments</label>
+            </legend>
+            <div id="commentOptions" class="comment-options hidden">
+              <label>
+                Comments per post
+                <input type="number" id="commentLimit" value="5" min="1" max="50" />
+              </label>
+              <label>
+                Sort by
+                <select id="commentSort">
+                  <option value="top">Top</option>
+                  <option value="best">Best</option>
+                  <option value="new">Newest</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
         </div>
-
-        <fieldset class="full-width">
-          <legend>Sort posts</legend>
-          <label><input type="radio" name="postSort" value="" checked /> None</label>
-          <label><input type="radio" name="postSort" value="likes" /> Top liked (score)</label>
-          <label><input type="radio" name="postSort" value="comments" /> Most commented</label>
-          <label><input type="radio" name="postSort" value="recent" /> Newest</label>
-        </fieldset>
-
-        <fieldset class="full-width">
-          <legend>
-            <label>
-              <input type="checkbox" id="fetchComments" />
-              Fetch Comments
-            </label>
-          </legend>
-          <div id="commentOptions" class="comment-options hidden">
-            <label>
-              Comments per post
-              <input type="number" id="commentLimit" value="10" min="1" max="50" />
-            </label>
-            <label>
-              Sort comments by
-              <select id="commentSort">
-                <option value="top">Top (most upvoted)</option>
-                <option value="best">Best (Reddit algorithm)</option>
-                <option value="new">Newest</option>
-              </select>
-            </label>
-          </div>
-        </fieldset>
 
         <button type="submit" class="btn-analyze">Analyze Data</button>
       </form>
 
       <div id="exportButtons" class="export-buttons hidden">
-        <button id="exportCSV" class="btn-export">
-          <span>📊</span> Download CSV Report
-        </button>
-        <button id="exportJSON" class="btn-export">
-          <span>📄</span> Download JSON Data
-        </button>
+        <button id="exportCSV" class="btn-export"><span>📊</span> Download CSV</button>
+        <button id="exportJSON" class="btn-export"><span>📄</span> Download JSON</button>
       </div>
     </div>
 
-    <!-- Loading State with Progress -->
+    <!-- Loading -->
     <div id="loading" class="loading hidden">
       <div class="progress-container">
         <div class="spinner"></div>
-        <h3 id="loadingTitle">Initializing...</h3>
+        <h3 id="loadingTitle">Initializing…</h3>
         <div class="progress-bar">
           <div id="progressFill" class="progress-fill"></div>
         </div>
-        <p id="loadingStatus">Preparing to fetch data...</p>
+        <p id="loadingStatus">Preparing to fetch data…</p>
         <div id="loadingDetails" class="loading-details">
           <div class="loading-step">
             <span class="step-icon" id="stepIcon1">⏳</span>
-            <span class="step-text" id="stepText1">Fetching posts...</span>
+            <span class="step-text" id="stepText1">Fetching posts…</span>
           </div>
           <div class="loading-step">
             <span class="step-icon" id="stepIcon2">⏳</span>
-            <span class="step-text" id="stepText2">Analyzing sentiment...</span>
+            <span class="step-text" id="stepText2">Running AI analysis…</span>
           </div>
           <div class="loading-step">
             <span class="step-icon" id="stepIcon3">⏳</span>
-            <span class="step-text" id="stepText3">Extracting trends...</span>
+            <span class="step-text" id="stepText3">Extracting trends…</span>
           </div>
           <div class="loading-step">
             <span class="step-icon" id="stepIcon4">⏳</span>
-            <span class="step-text" id="stepText4">Processing results...</span>
+            <span class="step-text" id="stepText4">Building results…</span>
           </div>
         </div>
       </div>
@@ -130,19 +203,16 @@
         <div class="stat-value" id="totalPosts">0</div>
         <div class="stat-label">Total Posts</div>
       </div>
-
       <div class="stat-card">
         <div class="stat-icon">💬</div>
         <div class="stat-value" id="totalComments">0</div>
         <div class="stat-label">Total Comments</div>
       </div>
-
       <div class="stat-card">
         <div class="stat-icon">⬆️</div>
         <div class="stat-value" id="totalScore">0</div>
         <div class="stat-label">Total Score</div>
       </div>
-
       <div class="stat-card">
         <div class="stat-icon">🔥</div>
         <div class="stat-value" id="avgEngagement">0</div>
@@ -150,46 +220,26 @@
       </div>
     </div>
 
-    <!-- Sentiment Analysis -->
+    <!-- Sentiment Analysis (AI-powered) -->
     <div id="sentimentSection" class="section-card hidden">
-      <h2>😊 Sentiment Analysis <span class="badge-ai">AI-Powered (Coming Soon)</span></h2>
-      <div class="sentiment-bars">
-        <div class="sentiment-bar">
-          <div class="sentiment-label">
-            <span class="sentiment-icon positive">😊</span>
-            <span>Positive</span>
-          </div>
-          <div class="bar-container">
-            <div class="bar bar-positive" id="positiveBar" style="width: 0%"></div>
-            <span class="bar-value" id="positivePercent">0%</span>
-          </div>
+      <h2>😊 Sentiment Analysis</h2>
+      <div id="sentimentBars">
+        <div class="s-row">
+          <span class="s-label">Positive</span>
+          <div class="s-track"><div class="s-fill pos" id="positiveBar" style="width:0%"></div></div>
+          <span class="s-pct" id="positivePercent">0%</span>
         </div>
-
-        <div class="sentiment-bar">
-          <div class="sentiment-label">
-            <span class="sentiment-icon neutral">😐</span>
-            <span>Neutral</span>
-          </div>
-          <div class="bar-container">
-            <div class="bar bar-neutral" id="neutralBar" style="width: 0%"></div>
-            <span class="bar-value" id="neutralPercent">0%</span>
-          </div>
+        <div class="s-row">
+          <span class="s-label">Neutral</span>
+          <div class="s-track"><div class="s-fill neu" id="neutralBar" style="width:0%"></div></div>
+          <span class="s-pct" id="neutralPercent">0%</span>
         </div>
-
-        <div class="sentiment-bar">
-          <div class="sentiment-label">
-            <span class="sentiment-icon negative">😞</span>
-            <span>Negative</span>
-          </div>
-          <div class="bar-container">
-            <div class="bar bar-negative" id="negativeBar" style="width: 0%"></div>
-            <span class="bar-value" id="negativePercent">0%</span>
-          </div>
+        <div class="s-row">
+          <span class="s-label">Negative</span>
+          <div class="s-track"><div class="s-fill neg" id="negativeBar" style="width:0%"></div></div>
+          <span class="s-pct" id="negativePercent">0%</span>
         </div>
       </div>
-      <p class="info-text">
-        <strong>Note:</strong> Currently using basic keyword analysis. AI sentiment analysis coming soon.
-      </p>
     </div>
 
     <!-- Trending Topics -->
@@ -204,36 +254,32 @@
       <div id="topPostsList" class="top-posts-list"></div>
     </div>
 
-    <!-- AI Insights (Placeholder) -->
-    <div id="aiInsightsSection" class="section-card ai-placeholder hidden">
-      <h2>🤖 AI Insights <span class="badge-ai">Coming Soon</span></h2>
-      <div class="ai-feature-list">
-        <div class="ai-feature">
-          <span class="ai-icon">🧠</span>
-          <div>
-            <strong>Deep Sentiment Analysis</strong>
-            <p>Advanced NLP to detect sarcasm, emotion intensity, and context</p>
-          </div>
+    <!-- AI Insights (real Ollama output) -->
+    <div id="aiInsightsSection" class="section-card hidden">
+      <h2>🤖 AI Insights</h2>
+      <div class="ai-insights-card">
+        <div id="aiLoadingState" class="ai-loading hidden">
+          <div class="spinner"></div>
+          <span>Running local AI analysis — may take 30–60 s on first run…</span>
         </div>
-        <div class="ai-feature">
-          <span class="ai-icon">📰</span>
-          <div>
-            <strong>Breaking News Detection</strong>
-            <p>Identify sudden spikes in discussion volume and viral content</p>
+        <div id="aiErrorState" class="hidden"></div>
+        <div id="aiResultsState" class="hidden">
+          <div class="ai-status-row">
+            <span id="aiPostCount"></span>
+            <span style="color:var(--line)">·</span>
+            <span id="aiMoodBadge" class="mood-badge"></span>
           </div>
-        </div>
-        <div class="ai-feature">
-          <span class="ai-icon">🔮</span>
-          <div>
-            <strong>Trend Prediction</strong>
-            <p>Forecast emerging topics based on historical patterns</p>
+          <div class="ai-sub-section">
+            <div class="ai-sub-title">Summary</div>
+            <p id="aiSummary" class="ai-summary"></p>
           </div>
-        </div>
-        <div class="ai-feature">
-          <span class="ai-icon">📊</span>
-          <div>
-            <strong>Smart Summarization</strong>
-            <p>Auto-generate summaries of thousands of posts and comments</p>
+          <div class="ai-sub-section" id="aiThemesWrap">
+            <div class="ai-sub-title">Key Themes</div>
+            <div id="aiThemes" class="themes"></div>
+          </div>
+          <div class="ai-sub-section" id="aiInsightsWrap">
+            <div class="ai-sub-title">Insights</div>
+            <ul id="aiInsightsList" class="insights-list"></ul>
           </div>
         </div>
       </div>
