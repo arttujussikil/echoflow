@@ -20,6 +20,8 @@ EchoFlow aggregates content from multiple platforms, runs AI-powered analysis vi
 - [Adding a New Platform](#adding-a-new-platform)
 - [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
+- [Authors](#authors)
+- [License](#license)
 
 ---
 
@@ -584,6 +586,19 @@ The web container may start before Postgres finishes initialising. Run `docker c
 **Reddit rate limit (429 in logs)**
 
 Reddit allows ~60 requests/minute unauthenticated. EchoFlow backs off automatically. Reduce `limit` or disable comment fetching to lower request volume.
+
+---
+
+## Authors
+
+- **Niko Kulkula**
+- **Arttu-Jussi Kilponen**
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
 
 **TypeScript errors after pulling new changes**
 
