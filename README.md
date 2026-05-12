@@ -1,8 +1,8 @@
 # EchoFlow
 
-> AI-powered sentiment and trend analysis engine that aggregates posts from multiple platforms and surfaces insights via a local LLM — zero cloud cost.
+> Collect posts from Reddit, Hacker News, and any RSS/Atom feed — analyze sentiment, themes, and trends with AI — zero cloud cost.
 
-EchoFlow collects posts and comments from social platforms and RSS/Atom feeds, runs AI-powered sentiment analysis and trend extraction using a local Ollama model, and exposes the results through a REST API and a built-in web UI. Everything runs in Docker — one command and you're up.
+EchoFlow aggregates content from multiple platforms, runs AI-powered analysis via NVIDIA NIM (free cloud) or local Ollama, and surfaces insights through a REST API and three web UIs. Everything runs in Docker — one command and you're up.
 
 ---
 
@@ -15,6 +15,7 @@ EchoFlow collects posts and comments from social platforms and RSS/Atom feeds, r
 - [Local Development](#local-development)
 - [Environment Variables](#environment-variables)
 - [Supported Platforms](#supported-platforms)
+- [News Feed UI](#news-feed-ui)
 - [API Reference](#api-reference)
 - [Adding a New Platform](#adding-a-new-platform)
 - [Project Structure](#project-structure)
@@ -24,16 +25,15 @@ EchoFlow collects posts and comments from social platforms and RSS/Atom feeds, r
 
 ## Features
 
-- **Multi-platform collection** — Reddit, Hacker News, and any RSS/Atom feed out of the box
-- **RSS/Atom feed support** — paste any feed URL to collect from blogs, news sites, YouTube channels, Mastodon, esports sites, and hundreds more
-- **Free local AI** — sentiment analysis, themes, mood, and insights powered by Ollama (runs inside Docker, no API key or cost)
-- **Pluggable collector registry** — adding a new platform is one file + one `register()` call, no route changes
+- **Multi-platform collection** — Reddit, Hacker News, and any RSS/Atom feed out of the box; add new platforms in one file
+- **Curated News Feed** — one-click news from 40+ pre-configured feeds across US, Tech, Gaming, Esports, and Finnish media
+- **Free AI, two tiers** — set `NVIDIA_API_KEY` for high-accuracy cloud inference via [NVIDIA NIM](https://build.nvidia.com) (free endpoint); falls back to local Ollama automatically when no key is set
+- **Clickable sentiment filtering** — after AI analysis, click Positive / Neutral / Negative bars to filter posts by sentiment
 - **Flexible search modes** — keyword search, latest posts, or top posts per time range
 - **Comment fetching** — pull top/best/new comments for each post in the same request
 - **Multiple export formats** — JSON, CSV, or HTML table from any search endpoint
 - **Persistent storage** — PostgreSQL backend; searches, posts, and comments can be optionally saved
-- **Three web UIs** — curated news feed, universal search, and full analytics dashboard at `/ui/`
-- **Curated News Feed** — one-click news from 40+ pre-configured feeds across US, Tech, Gaming, Esports, and Finnish media — no setup needed
+- **Pluggable collector registry** — adding a new platform is one file + one `register()` call, no route changes
 - **Adminer** — visual database browser included in the Docker stack
 
 ---
@@ -41,35 +41,37 @@ EchoFlow collects posts and comments from social platforms and RSS/Atom feeds, r
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                          EchoFlow                              │
-│                                                                │
-│  ┌──────────┐   ┌──────────────────────────────────────────┐  │
-│  │  Web UI  │   │           REST API (Express)             │  │
-│  │  /ui/*   │   │  /api/search  /api/platforms  /api/...   │  │
-│  └──────────┘   └───────────────────┬──────────────────────┘  │
-│                                     │                          │
-│                   ┌─────────────────▼─────────────────────┐   │
-│                   │          CollectorRegistry             │   │
-│                   │   register()   get()   getAll()        │   │
-│                   └───┬──────────────┬────────────────┬───┘   │
-│                       │              │                │        │
-│           ┌───────────▼──┐  ┌────────▼───────┐  ┌────▼────┐  │
-│           │   Reddit     │  │  HackerNews    │  │   RSS   │  │
-│           │ .json API    │  │ Algolia API    │  │  Atom   │  │
-│           └──────────────┘  └────────────────┘  └─────────┘  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  Ollama (local LLM — llama3.2:3b by default)             │ │
-│  │  POST /api/analytics/analyze → sentiment, themes,        │ │
-│  │  mood, summary, insights — runs in Docker, zero cost     │ │
-│  └──────────────────────────────────────────────────────────┘ │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  PostgreSQL 16                                           │ │
-│  │  searches · posts · comments · search_posts              │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                           EchoFlow                              │
+│                                                                 │
+│  ┌──────────┐   ┌───────────────────────────────────────────┐  │
+│  │  Web UI  │   │           REST API (Express)              │  │
+│  │  /ui/*   │   │  /api/search  /api/platforms  /api/...    │  │
+│  └──────────┘   └──────────────────┬──────────────────────── ┘ │
+│                                    │                            │
+│                  ┌─────────────────▼──────────────────────┐    │
+│                  │           CollectorRegistry             │    │
+│                  │   register()   get()   getAll()         │    │
+│                  └──┬──────────────┬───────────────────┬───┘   │
+│                     │              │                   │        │
+│         ┌───────────▼──┐  ┌────────▼───────┐  ┌───────▼────┐  │
+│         │   Reddit     │  │  HackerNews    │  │  RSS/Atom  │  │
+│         │ .json API    │  │ Algolia API    │  │  any feed  │  │
+│         └──────────────┘  └────────────────┘  └────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  AI Provider (priority order)                            │  │
+│  │  1. NVIDIA NIM — mistralai/mistral-nemotron (free cloud) │  │
+│  │  2. Ollama     — llama3.2:3b (local Docker fallback)     │  │
+│  │  POST /api/analytics/analyze → sentiment, themes,        │  │
+│  │  mood, summary, insights — always free                   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  PostgreSQL 16                                           │  │
+│  │  searches · posts · comments · search_posts              │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key design decisions
@@ -79,7 +81,7 @@ EchoFlow collects posts and comments from social platforms and RSS/Atom feeds, r
 | Collector registry pattern | Adding a platform is one file + one `register()` call, no route changes |
 | `channels` abstraction | Subreddits, HN tags, feed URLs — one field each collector maps to its own concept |
 | RSS/Atom collector | Any site with a feed is instantly supported — no custom collector needed |
-| Local Ollama for AI | Zero API cost, runs in Docker, no data leaves your machine |
+| NVIDIA NIM primary + Ollama fallback | Free cloud model for accuracy; local fallback works offline with zero setup |
 | Opt-in persistence (`persist: true`) | Exploratory searches stay fast; you only hit the DB when you want to |
 
 ---
@@ -106,7 +108,17 @@ cp .env.example .env
 
 Open `.env` and set a `DB_PASSWORD`. Everything else works as-is for local use.
 
-**2. Start all services**
+**2. (Optional) Add a free NVIDIA API key for better AI accuracy**
+
+Get a free key at [build.nvidia.com](https://build.nvidia.com) → any model → "Get API Key". Add it to `.env`:
+
+```
+NVIDIA_API_KEY=nvapi-xxxxxxxxxxxx
+```
+
+Without a key, EchoFlow uses local Ollama automatically (downloads ~2 GB model on first use).
+
+**3. Start all services**
 
 ```bash
 docker compose up --build
@@ -118,28 +130,26 @@ Four containers start:
 |---|---|---|
 | `echoflow-web` | Node.js API + web UI | `http://localhost:3000` |
 | `echoflow-db` | PostgreSQL 16 | `localhost:5432` |
-| `echoflow-ollama` | Local LLM (Ollama) | `localhost:11434` |
+| `echoflow-ollama` | Local LLM fallback (Ollama) | `localhost:11434` |
 | `echoflow-adminer` | Visual database browser | `http://localhost:8888` |
 
 The database schema is applied automatically from `src/db/init/01_schema.sql`.
 
-> **First run:** Ollama downloads the AI model (~2 GB) when you first click "Analyze with AI". Watch progress: `docker logs echoflow-ollama -f`
-
-**3. Open the UI**
+**4. Open the UI**
 
 ```
-http://localhost:3000          → redirects to search page
-http://localhost:3000/ui/      → landing page
-http://localhost:3000/ui/news     → curated news feed (40+ pre-configured RSS feeds)
-http://localhost:3000/ui/reddit   → universal search (all platforms)
+http://localhost:3000               → redirects to search page
+http://localhost:3000/ui/           → landing page
+http://localhost:3000/ui/news       → curated news feed (40+ pre-configured RSS feeds)
+http://localhost:3000/ui/reddit     → universal search (all platforms)
 http://localhost:3000/ui/analytics.html → analytics dashboard
 ```
 
-**4. Hard-refresh after any rebuild**
+**5. Hard-refresh after any rebuild**
 
-After `docker compose up --build`, always press **Ctrl+Shift+R** in the browser to bypass cached JS.
+After `docker compose up --build`, press **Ctrl+Shift+R** in the browser to bypass cached JS.
 
-**5. Verify**
+**6. Verify**
 
 ```bash
 curl http://localhost:3000/health
@@ -176,23 +186,36 @@ npm start      # run compiled output
 | `DB_USER` | `echoflow` | Postgres user |
 | `DB_PASSWORD` | — | **Required** — set before first run |
 | `DB_NAME` | `echoflow` | Postgres database name |
-| `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (`ollama` = Docker service name) |
-| `OLLAMA_MODEL` | `llama3.2:3b` | Model to use for AI analysis |
+| `NVIDIA_API_KEY` | — | Free NVIDIA NIM API key — get one at [build.nvidia.com](https://build.nvidia.com). When set, used as **primary** AI provider. |
+| `NVIDIA_MODEL` | `mistralai/mistral-nemotron` | NVIDIA NIM model ID |
+| `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (used when no NVIDIA key) |
 
-**Model options** (set `OLLAMA_MODEL` in `.env`):
+**AI provider priority:** NVIDIA NIM → Ollama. If NVIDIA fails or no key is set, Ollama is used automatically. Both are free.
 
-| Model | Size | Quality |
+**Recommended NVIDIA NIM models** (free tier, set via `NVIDIA_MODEL`):
+
+| Model | Notes |
+|---|---|
+| `mistralai/mistral-nemotron` | **Default** — fast, excellent instruction following, reliable JSON output |
+| `mistralai/mistral-large-3-675b-instruct-2512` | Highest quality, slower |
+| `meta/llama-4-maverick-17b-128e-instruct` | Multilingual MoE, 20M downloads |
+
+**Ollama fallback models** (local, no internet needed, set via `OLLAMA_MODEL`):
+
+| Model | Size | Notes |
 |---|---|---|
-| `llama3.2:3b` | ~2 GB | Recommended — good structured output |
+| `llama3.2:3b` | ~2 GB | **Default** — good structured output |
 | `llama3.2:1b` | ~600 MB | Lighter but unreliable for analysis |
-| `llama3.1:8b` | ~4.7 GB | Best quality, needs more RAM |
+| `llama3.1:8b` | ~4.7 GB | Best local quality, needs more RAM |
 
 ---
 
 ## Supported Platforms
 
 ### Reddit
-Uses Reddit's public JSON API — no auth required.
+
+Uses Reddit's public JSON API — no authentication required.
 
 `channels` = subreddit names (without `r/`).
 
@@ -207,7 +230,8 @@ Uses Reddit's public JSON API — no auth required.
 ```
 
 ### Hacker News
-Uses the [Algolia HN Search API](https://hn.algolia.com/api) — free, no key.
+
+Uses the [Algolia HN Search API](https://hn.algolia.com/api) — free, no key required.
 
 `channels` = Algolia tag filters: `story`, `ask_hn`, `show_hn`, `job`.
 
@@ -222,6 +246,7 @@ Uses the [Algolia HN Search API](https://hn.algolia.com/api) — free, no key.
 ```
 
 ### RSS / Atom Feeds
+
 Any standard RSS 2.0 or Atom feed. Paste one or more feed URLs into the **Feed URLs** field.
 
 `channels` = list of feed URLs.
@@ -238,7 +263,7 @@ Any standard RSS 2.0 or Atom feed. Paste one or more feed URLs into the **Feed U
 }
 ```
 
-**Feeds that work well:**
+**Working feed examples:**
 
 | Source | Feed URL |
 |---|---|
@@ -253,15 +278,15 @@ Any standard RSS 2.0 or Atom feed. Paste one or more feed URLs into the **Feed U
 
 > **Reddit RSS is blocked** — Reddit returns 403 for server-side RSS requests. Use the Reddit collector instead.
 >
-> **Cloudflare-protected forums** (e.g. HLTV forum threads) — scraping forum pages requires a real browser due to Cloudflare managed-challenge protection. Use the HLTV news RSS feed for HLTV content, and the Reddit collector for CS:GO forum-style discussion.
+> **Cloudflare-protected sites** (e.g. HLTV forum threads) — Cloudflare managed-challenge blocks all automated HTTP. Use the HLTV news RSS feed (`/rss/news`) for HLTV content instead.
 
 ---
 
-### News Feed UI (`/ui/news`)
+## News Feed UI
 
-A curated news page with 40+ pre-configured RSS feeds across five categories. No configuration needed — pick a category, select feeds, and click **Load News**.
+Available at `/ui/news` — a curated news page with 40+ pre-configured RSS feeds. No configuration needed: pick a category, select feeds, click **Load News**.
 
-| Category | Feeds included |
+| Category | Included feeds |
 |---|---|
 | 🇺🇸 US News | AP News, NPR, Reuters, CNN, NYT, Washington Post, HuffPost, Politico, CNBC, Yahoo News |
 | 💻 Tech | Hacker News, Ars Technica, The Verge, TechCrunch, Wired, MIT Tech Review, Engadget, Gizmodo, VentureBeat, TNW, CNET, Slashdot |
@@ -269,13 +294,13 @@ A curated news page with 40+ pre-configured RSS feeds across five categories. No
 | 🏆 Esports | HLTV (CS news), Dot Esports, TheGamer, Esports Insider, Dexerto, ONE Esports |
 | 🇫🇮 Finland | Yle Uutiset, Yle News (EN), Helsingin Sanomat, Ilta-Sanomat, Iltalehti, MTV Uutiset, Kauppalehti, Taloussanomat, Aamulehti, Turun Sanomat |
 
-After loading, click **✦ Analyze with AI** for sentiment analysis. Once the analysis runs, click any sentiment bar (Positive / Neutral / Negative) to filter the article list to only articles tagged with that sentiment.
+After loading, click **✦ Analyze with AI** for sentiment analysis. Click any sentiment bar (Positive / Neutral / Negative) to filter the article list to only those tagged with that sentiment.
 
 ---
 
 ## API Reference
 
-All endpoints under `http://localhost:3000/api`. Add `?pretty=1` for indented JSON.
+All endpoints under `http://localhost:3000/api`.
 
 ---
 
@@ -300,9 +325,9 @@ All endpoints under `http://localhost:3000/api`. Add `?pretty=1` for indented JS
 }
 ```
 
-If some platforms fail, their errors are in `platformErrors` and working-platform results are still returned.
+If some platforms fail, their errors appear in `platformErrors` and results from working platforms are still returned.
 
-**Response formats:** `?format=json` (default), `?format=csv`, `?format=html`
+**Response formats:** append `?format=csv` or `?format=html` for alternative outputs.
 
 ---
 
@@ -313,9 +338,9 @@ Returns all registered collectors and their capabilities.
 ```json
 {
   "platforms": [
-    { "id": "reddit",      "displayName": "Reddit",             "capabilities": { "search": true, "latest": true, "top": true, "comments": true, "requiresAuth": false } },
-    { "id": "hackernews",  "displayName": "Hacker News",        "capabilities": { "search": true, "latest": true, "top": true, "comments": true, "requiresAuth": false } },
-    { "id": "rss",         "displayName": "RSS / Atom Feeds",   "capabilities": { "search": true, "latest": true, "top": true, "comments": false, "requiresAuth": false } }
+    { "id": "reddit",     "displayName": "Reddit",           "capabilities": { "search": true, "latest": true, "top": true, "comments": true,  "requiresAuth": false } },
+    { "id": "hackernews", "displayName": "Hacker News",      "capabilities": { "search": true, "latest": true, "top": true, "comments": true,  "requiresAuth": false } },
+    { "id": "rss",        "displayName": "RSS / Atom Feeds", "capabilities": { "search": true, "latest": true, "top": true, "comments": false, "requiresAuth": false } }
   ]
 }
 ```
@@ -324,7 +349,7 @@ Returns all registered collectors and their capabilities.
 
 ### POST /api/analytics/analyze
 
-Runs local AI analysis (Ollama) on a set of posts. Called automatically by the analytics dashboard after data collection.
+Runs AI analysis on a set of posts. Uses NVIDIA NIM if `NVIDIA_API_KEY` is set, otherwise Ollama.
 
 ```jsonc
 // Request
@@ -332,34 +357,38 @@ Runs local AI analysis (Ollama) on a set of posts. Called automatically by the a
 
 // Response
 {
-  "sentiment": { "positive": 55, "neutral": 30, "negative": 15 },
-  "themes": ["team performance", "tournament format", "player transfers"],
-  "summary": "Community discussion focuses on recent tournament results...",
-  "mood": "excited",
-  "insights": [
-    "Team roster changes are the dominant topic.",
-    "Sentiment spikes around major tournament announcements."
-  ],
-  "postCount": 25,
+  "sentiment":  { "positive": 55, "neutral": 30, "negative": 15 },
+  "themes":     ["team performance", "tournament format", "player transfers"],
+  "summary":    "Community discussion focuses on recent tournament results...",
+  "mood":       "excited",
+  "insights":   ["Team roster changes are the dominant topic.", "Sentiment spikes around major announcements."],
+  "postCount":  25,
+  "provider":   "nvidia:mistralai/mistral-nemotron",
   "analyzedAt": "2026-05-12T10:00:00.000Z"
 }
 ```
 
-On first call, Ollama pulls the configured model (~2 GB). Returns 503 if Ollama is not yet ready.
+Returns 503 if Ollama is not yet ready (first pull can take a few minutes).
 
 ---
 
 ### GET /api/analytics/status
 
 ```json
-{ "available": true, "model": "llama3.2:3b", "host": "http://ollama:11434" }
+{
+  "available":   true,
+  "model":       "llama3.2:3b",
+  "nvidiaModel": "mistralai/mistral-nemotron",
+  "host":        "http://ollama:11434",
+  "nvidia":      true
+}
 ```
 
 ---
 
 ### POST /api/reddit/comments
 
-Fetch comments for a specific Reddit post by ID or URL.
+Fetch comments for a specific Reddit post.
 
 ```jsonc
 {
@@ -378,16 +407,6 @@ Export analytics data as a file download.
 
 ```jsonc
 { "data": { /* analytics object */ }, "format": "csv" }
-```
-
----
-
-### GET /api/search/rate-limits
-
-Returns current rate limit state for collectors that track it.
-
-```json
-{ "reddit": { "remaining": 58, "resetAt": "2026-05-12T10:01:00.000Z", "resetIn": 47000 } }
 ```
 
 ---
@@ -429,15 +448,15 @@ export class DevToCollector extends BaseCollector {
     });
 
     return this.validatePosts(data.map((a: any) => ({
-      id: String(a.id),
-      platform: 'devto' as any,
-      title: a.title,
-      content: a.description ?? a.title,
-      author: a.user?.username ?? 'unknown',
-      url: a.url,
-      createdAt: new Date(a.published_at),
+      id:         String(a.id),
+      platform:   'devto' as any,
+      title:      a.title,
+      content:    a.description ?? a.title,
+      author:     a.user?.username ?? 'unknown',
+      url:        a.url,
+      createdAt:  new Date(a.published_at),
       engagement: { likes: a.positive_reactions_count ?? 0, comments: a.comments_count ?? 0, shares: 0, score: a.positive_reactions_count ?? 0 },
-      metadata: { tags: a.tag_list },
+      metadata:   { tags: a.tag_list },
     })));
   }
 }
@@ -451,16 +470,18 @@ import { DevToCollector } from './devto-collector';
 registry.register(new DevToCollector());
 ```
 
-**Step 3 — Add the platform type**
+**Step 3 — Add the platform type (optional)**
 
 ```typescript
 // src/models/post.ts
-platform: 'reddit' | 'hackernews' | 'rss' | 'devto' | 'twitter' | 'forum';
+platform: 'reddit' | 'hackernews' | 'rss' | 'devto';
 ```
 
-Done. The chip appears in the UI automatically — no frontend changes needed. Rebuild with `docker compose up --build`.
+Done. The platform chip appears in the UI automatically on next rebuild — no frontend changes needed.
 
-> **Cloudflare-protected sites:** Sites like HLTV forums use Cloudflare managed-challenge, which blocks all automated HTTP requests regardless of headers. Scraping these requires a real browser (Puppeteer/Playwright) and is still unreliable. Check if the site offers an RSS feed instead — many do.
+```bash
+docker compose up --build
+```
 
 ---
 
@@ -473,7 +494,7 @@ echoflow/
 │   ├── api/
 │   │   ├── server.ts                  # Middleware, routes, /api/platforms, root redirect
 │   │   └── routes/
-│   │       ├── search.ts              # POST /api/search — registry dispatch
+│   │       ├── search.ts              # POST /api/search — registry fan-out
 │   │       ├── analytics.ts           # /api/analytics/* — AI analysis + export
 │   │       ├── export.ts              # /api/export/*
 │   │       └── reddit.ts              # POST /api/reddit/comments
@@ -486,7 +507,7 @@ echoflow/
 │   │   ├── rss-collector.ts           # Generic RSS 2.0 / Atom feed collector
 │   │   └── forum-collector.ts         # Abstract template for custom forum collectors
 │   ├── services/
-│   │   └── ai-service.ts              # Ollama integration — analyzeWithAI, checkOllamaStatus
+│   │   └── ai-service.ts              # AI integration — NVIDIA NIM (primary) + Ollama (fallback)
 │   ├── db/
 │   │   ├── pool.ts                    # pg connection pool
 │   │   ├── repositories.ts            # upsertPost, upsertComment, createSearch, …
@@ -504,11 +525,11 @@ echoflow/
 │       ├── errors.ts                  # APIError, RateLimitError, NetworkError
 │       └── validators.ts
 ├── public/
-│   ├── index.html                     # Landing page
+│   ├── index.html                     # Landing page (clickable feature cards)
 │   ├── news.html                      # Curated news feed (40+ RSS feeds, 5 categories)
 │   ├── reddit.html                    # Universal search UI (all platforms + AI)
-│   ├── analytics.html                 # Analytics dashboard (auto AI analysis)
-│   ├── news.js                        # News feed JS (feed picker, sentiment filter)
+│   ├── analytics.html                 # Analytics dashboard + sentiment filtering
+│   ├── news.js                        # News feed JS (feed picker, AI analysis, sentiment filter)
 │   ├── app.js                         # Search page JS
 │   ├── analytics.js                   # Analytics dashboard JS
 │   └── styles.css
@@ -529,39 +550,43 @@ echoflow/
 
 **Only Reddit shows in the platform picker**
 
-The Docker image is stale. Run `docker compose up --build`, then hard-refresh the browser with Ctrl+Shift+R.
+The Docker image is stale. Run `docker compose up --build`, then hard-refresh with Ctrl+Shift+R.
 
 **"Route not found" at `http://localhost:3000`**
 
-The root URL redirects to `/ui/reddit`. If you see this error the server hasn't rebuilt yet — run `docker compose up --build`.
+The root URL redirects to `/ui/reddit`. If you see this error, run `docker compose up --build`.
 
 **RSS feed returns 0 results**
 
-- Check the URL is a valid RSS/Atom feed (open it in a browser — it should show XML)
-- **Reddit RSS is blocked** — Reddit returns 403 for server-side requests; use the Reddit collector
-- Sites behind Cloudflare will also block the request; check if they have a separate RSS URL (many do)
-- See the [working feed examples](#rss--atom-feeds) in the Supported Platforms section
+- Verify the URL is a valid RSS/Atom feed (open it in a browser — it should show XML)
+- Reddit RSS (`*.rss`) returns 403 server-side — use the Reddit collector instead
+- Sites behind Cloudflare block automated requests — check if the site has a separate news RSS URL
 
-**AI analysis shows only neutral / AI Insights is empty**
+**AI analysis shows only neutral / all posts classified neutral**
 
-- The `llama3.2:1b` model is too small for structured output — set `OLLAMA_MODEL=llama3.2:3b` in `.env` and rebuild
-- On first run, Ollama may still be downloading the model — wait a minute and try again: `docker logs echoflow-ollama -f`
+- Without an `NVIDIA_API_KEY`, Ollama is used. The `llama3.2:1b` model is too small — set `OLLAMA_MODEL=llama3.2:3b` in `.env` and rebuild
+- For best results, add a free `NVIDIA_API_KEY` — the cloud model handles structured output much more reliably
 
 **Ollama returns 503**
 
-Ollama is still starting or pulling the model. Check: `docker logs echoflow-ollama -f`. The first pull is ~2 GB and can take several minutes.
+Ollama is still starting or pulling the model (~2 GB on first run). Check progress: `docker logs echoflow-ollama -f`
+
+**NVIDIA NIM returns an error**
+
+- Verify the key is correct in `.env` (no extra spaces)
+- Some models may be geo-restricted — try `mistralai/mistral-nemotron` (default) or `mistralai/mistral-large-3-675b-instruct-2512`
+- EchoFlow automatically falls back to Ollama if NVIDIA fails
 
 **Database connection error on startup**
 
-The web container may start before Postgres finishes. Run `docker compose restart web`.
+The web container may start before Postgres finishes initialising. Run `docker compose restart web`.
 
 **Reddit rate limit (429 in logs)**
 
-Reddit allows ~60 requests/minute unauthenticated. EchoFlow logs the warning and backs off automatically. Reduce `limit` or disable comment fetching to lower request volume.
+Reddit allows ~60 requests/minute unauthenticated. EchoFlow backs off automatically. Reduce `limit` or disable comment fetching to lower request volume.
 
 **TypeScript errors after pulling new changes**
 
 ```bash
-npm install
-npm run build
+npm install && npm run build
 ```
