@@ -16,6 +16,8 @@ const channelsLabel    = document.getElementById('channelsLabel');
 const channelsInput    = document.getElementById('channels');
 
 let currentAnalyticsData = null;
+let allAnalysedPosts = [];
+let activeSentimentFilter = null;
 
 // ── Platform loading ───────────────────────────────────────────────────────────
 async function loadPlatforms() {
@@ -111,6 +113,10 @@ async function analyzeData() {
 
   loading.classList.remove('hidden');
   hideAllSections();
+  allAnalysedPosts = [];
+  activeSentimentFilter = null;
+  clearSentimentHighlight();
+  document.getElementById('sentimentFilterPanel').style.display = 'none';
   updateProgress(0, 'Starting analysis…', 'Preparing request…', 1);
 
   try {
@@ -156,7 +162,11 @@ async function analyzeData() {
     statsSection.classList.remove('hidden');
 
     // ── Step 3: AI analysis ────────────────────────────────────────────────────
-    updateProgress(60, 'Running AI analysis…', 'Sending posts to local Ollama model…', 2);
+    const aiStatus = await fetch('/api/analytics/status').then(r => r.json()).catch(() => ({}));
+    const aiLabel = aiStatus.nvidia
+      ? `NVIDIA NIM (${(aiStatus.nvidiaModel || 'mistral-nemotron').split('/').pop()})`
+      : `Ollama (${aiStatus.model || 'llama3.2:3b'})`;
+    updateProgress(60, 'Running AI analysis…', `Sending posts to ${aiLabel}…`, 2);
     aiInsightsSection.classList.remove('hidden');
     showAILoading();
 
@@ -196,6 +206,9 @@ async function analyzeData() {
     topPostsSection.classList.remove('hidden');
 
     // ── Done ───────────────────────────────────────────────────────────────────
+    allAnalysedPosts = posts;
+    classifyPostsSentiment(aiAnalysis?.sentiment);
+    wireSentimentBars();
     currentAnalyticsData = { posts, platforms, keyword, timeRange };
     updateProgress(100, 'Complete!', `Analysed ${posts.length} posts`, 4);
     await tick(300);
@@ -239,7 +252,11 @@ function showAIResults(a) {
     mixed: '#a78bfa', neutral: '#94a3b8'
   }[a.mood] || '#a78bfa';
 
-  document.getElementById('aiPostCount').textContent = `${a.postCount} posts analysed`;
+  const providerLabel = a.provider
+    ? (a.provider.startsWith('nvidia') ? '⚡ NVIDIA NIM' : '🖥 Ollama')
+    : '';
+  document.getElementById('aiPostCount').textContent =
+    `${a.postCount} posts analysed${providerLabel ? ' · ' + providerLabel : ''}`;
   const badge = document.getElementById('aiMoodBadge');
   badge.textContent = a.mood;
   badge.style.background = moodColor + '22';
@@ -431,6 +448,117 @@ function displayTopPosts(posts) {
           </details>` : ''}
       </div>`;
   }).join('');
+}
+
+// ── Sentiment classification + filtering ──────────────────────────────────────
+const POS_WORDS = new Set([
+  'win','wins','won','victory','champion','record','breakthrough','launch','launches','launched',
+  'deal','agreement','approved','peace','rescue','rescued','survive','survived','recover','recovery',
+  'growth','grow','grows','improve','improved','boost','rise','rising','gain','gains','increase','expand',
+  'upgrade','advance','progress','strengthen','best','top','success','celebrate','positive','innovative',
+  'profit','revenue','surplus','invest','funding','partnership','hire','hiring','jobs','employ','save',
+  'protect','benefit','achieve','solution','create','build','open','cure','vaccine','effective','discover',
+]);
+
+const NEG_WORDS = new Set([
+  'dead','death','die','dies','died','kill','kills','killed','murder','shooting','shot','attack','attacks',
+  'explosion','bomb','terror','war','conflict','battle','riot','violence','crash','disaster','catastrophe',
+  'crisis','emergency','flood','earthquake','hurricane','wildfire','fire','collapse','epidemic','pandemic',
+  'arrest','charged','indicted','convicted','sentenced','prison','scandal','corruption','fraud','hack',
+  'stolen','theft','robbery','abuse','fail','failed','failure','bankrupt','recession','decline','drop',
+  'loss','lose','lost','cut','layoff','fired','resign','shutdown','ban','sanction','restrict','fine',
+  'threat','warning','danger','toxic','harmful','damage','injured','hurt','wounded','suffer',
+]);
+
+
+function classifyPostsSentiment(aiSentiment) {
+  if (!allAnalysedPosts.length) return;
+
+  // Score each post relatively — keyword score is used only for ranking, not hard cutoffs
+  const scored = allAnalysedPosts.map(p => ({ p, score: rawScore(p) }));
+  scored.sort((a, b) => b.score - a.score);
+
+  const n = scored.length;
+  const s = aiSentiment || { positive: 33, neutral: 34, negative: 33 };
+  const posCount = Math.round(n * s.positive / 100);
+  const negCount = Math.round(n * s.negative / 100);
+
+  scored.forEach((item, i) => {
+    if (i < posCount) item.p._sentiment = 'positive';
+    else if (i >= n - negCount && negCount > 0) item.p._sentiment = 'negative';
+    else item.p._sentiment = 'neutral';
+  });
+}
+
+function rawScore(post) {
+  const title = (post.title || '').toLowerCase();
+  const body  = (post.content || '').substring(0, 400).toLowerCase();
+  const tw = title.match(/\b\w+\b/g) || [];
+  const bw = body.match(/\b\w+\b/g)  || [];
+  let score = 0;
+  for (const w of tw) { if (POS_WORDS.has(w)) score += 3; if (NEG_WORDS.has(w)) score -= 3; }
+  for (const w of bw) { if (POS_WORDS.has(w)) score++;    if (NEG_WORDS.has(w)) score--; }
+  return score;
+}
+
+const SENT_COLOR = { positive: '#10b981', neutral: '#6366f1', negative: '#ef4444' };
+
+function wireSentimentBars() {
+  ['positive', 'neutral', 'negative'].forEach(s => {
+    const row = document.getElementById(`sRow${s.charAt(0).toUpperCase() + s.slice(1)}`);
+    if (!row) return;
+    row.addEventListener('click', () => {
+      if (activeSentimentFilter === s) {
+        activeSentimentFilter = null;
+        clearSentimentHighlight();
+        document.getElementById('sentimentFilterPanel').style.display = 'none';
+      } else {
+        activeSentimentFilter = s;
+        clearSentimentHighlight();
+        row.classList.add('s-active');
+        renderSentimentFiltered(s);
+      }
+    });
+  });
+  document.getElementById('clearSentimentFilter').addEventListener('click', () => {
+    activeSentimentFilter = null;
+    clearSentimentHighlight();
+    document.getElementById('sentimentFilterPanel').style.display = 'none';
+  });
+}
+
+function clearSentimentHighlight() {
+  ['sRowPositive','sRowNeutral','sRowNegative'].forEach(id => {
+    document.getElementById(id)?.classList.remove('s-active');
+  });
+}
+
+function renderSentimentFiltered(s) {
+  const filtered = allAnalysedPosts.filter(p => p._sentiment === s);
+  const panel = document.getElementById('sentimentFilterPanel');
+  const label = document.getElementById('sentimentFilterLabel');
+  const list  = document.getElementById('sentimentFilteredPosts');
+
+  label.innerHTML = `Showing <strong style="color:${SENT_COLOR[s]}">${s}</strong> posts (${filtered.length})`;
+
+  if (!filtered.length) {
+    list.innerHTML = '<p style="color:var(--muted);font-size:13px">No posts classified as ' + s + '.</p>';
+  } else {
+    list.innerHTML = filtered.map(p => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px">
+          <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(56,189,248,0.12);color:var(--accent);text-transform:uppercase;flex-shrink:0">${escapeHtml(p.platform)}</span>
+          <a href="${p.url || '#'}" target="_blank" rel="noopener" style="font-size:14px;font-weight:600;color:var(--fg);text-decoration:none;line-height:1.4">${escapeHtml(p.title)}</a>
+        </div>
+        <div style="font-size:12px;color:var(--muted);display:flex;gap:12px;padding-left:2px">
+          <span>↑ ${p.engagement?.score ?? 0}</span>
+          <span>by ${escapeHtml(p.author || '')}</span>
+          <span>${p.createdAt ? new Date(p.createdAt).toLocaleDateString() : ''}</span>
+        </div>
+      </div>`).join('');
+  }
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

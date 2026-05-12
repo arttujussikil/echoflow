@@ -51,7 +51,9 @@
     .ai-error { padding: 12px; color: #fca5a5; font-size: 13px; line-height: 1.5; background: rgba(239,68,68,0.05); border-radius: 8px; }
 
     /* Sentiment section */
-    .s-row { display: grid; grid-template-columns: 80px 1fr 44px; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 10px; }
+    .s-row { display: grid; grid-template-columns: 80px 1fr 44px; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 10px; cursor: pointer; border-radius: 6px; padding: 4px 6px; margin-left: -6px; transition: background 0.15s; }
+    .s-row:hover { background: rgba(255,255,255,0.05); }
+    .s-row.s-active { background: rgba(255,255,255,0.07); outline: 1px solid rgba(255,255,255,0.15); }
     .s-label { color: var(--muted); }
     .s-track { height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; }
     .s-fill { height: 100%; border-radius: 5px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
@@ -223,22 +225,30 @@
     <!-- Sentiment Analysis (AI-powered) -->
     <div id="sentimentSection" class="section-card hidden">
       <h2>😊 Sentiment Analysis</h2>
+      <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px">Click a bar to filter posts by sentiment</p>
       <div id="sentimentBars">
-        <div class="s-row">
+        <div class="s-row" id="sRowPositive" data-s="positive">
           <span class="s-label">Positive</span>
           <div class="s-track"><div class="s-fill pos" id="positiveBar" style="width:0%"></div></div>
           <span class="s-pct" id="positivePercent">0%</span>
         </div>
-        <div class="s-row">
+        <div class="s-row" id="sRowNeutral" data-s="neutral">
           <span class="s-label">Neutral</span>
           <div class="s-track"><div class="s-fill neu" id="neutralBar" style="width:0%"></div></div>
           <span class="s-pct" id="neutralPercent">0%</span>
         </div>
-        <div class="s-row">
+        <div class="s-row" id="sRowNegative" data-s="negative">
           <span class="s-label">Negative</span>
           <div class="s-track"><div class="s-fill neg" id="negativeBar" style="width:0%"></div></div>
           <span class="s-pct" id="negativePercent">0%</span>
         </div>
+      </div>
+      <div id="sentimentFilterPanel" style="display:none;margin-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:13px;color:var(--muted)">
+          <span id="sentimentFilterLabel"></span>
+          <button id="clearSentimentFilter" style="padding:3px 10px;font-size:12px;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:6px;cursor:pointer">Show all</button>
+        </div>
+        <div id="sentimentFilteredPosts"></div>
       </div>
     </div>
 
