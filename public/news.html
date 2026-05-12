@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>News – EchoFlow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./styles.css" />
+  <style>
+    /* Category tabs */
+    .cat-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .cat-tab {
+      padding: 7px 16px; border-radius: 8px; cursor: pointer;
+      font-size: 13px; font-weight: 600; border: 1px solid var(--line);
+      background: var(--card); color: var(--muted); transition: all 0.15s;
+      user-select: none;
+    }
+    .cat-tab:hover { border-color: var(--accent); color: var(--fg); }
+    .cat-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+
+    /* Feed checkboxes */
+    .feed-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 6px; margin-bottom: 16px;
+    }
+    .feed-item {
+      display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+      cursor: pointer; font-size: 13px; color: var(--muted); transition: all 0.15s;
+      user-select: none;
+    }
+    .feed-item:hover { border-color: var(--accent); color: var(--fg); }
+    .feed-item.checked { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+    .feed-item input { display: none; }
+    .feed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex-shrink: 0; transition: background 0.15s; }
+    .feed-item.checked .feed-dot { background: var(--accent); }
+
+    .feed-controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .feed-controls button {
+      padding: 4px 10px; font-size: 12px; background: transparent;
+      border: 1px solid var(--line); color: var(--muted); border-radius: 6px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .feed-controls button:hover { border-color: var(--accent); color: var(--fg); }
+    .feed-count { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+    /* Actions bar */
+    .news-actions {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+
+    /* News card */
+    .news-card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 16px 18px; margin-bottom: 10px;
+      transition: border-color 0.15s;
+    }
+    .news-card:hover { border-color: rgba(56,189,248,0.3); }
+    .news-card-h {
+      display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px;
+    }
+    .news-source {
+      display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em;
+      background: rgba(56,189,248,0.12); color: var(--accent); white-space: nowrap; flex-shrink: 0;
+    }
+    .news-title {
+      font-size: 15px; font-weight: 600; color: var(--fg); text-decoration: none; line-height: 1.4;
+    }
+    .news-title:hover { color: var(--accent); }
+    .news-meta {
+      display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 8px;
+    }
+    .news-snippet {
+      font-size: 13px; color: var(--muted); line-height: 1.6;
+      overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+
+    /* AI panel */
+    #aiPanel { display: none; margin-bottom: 16px; }
+    #aiPanel.visible { display: block; }
+    .ai-card {
+      background: var(--card); border: 1px solid rgba(139,92,246,0.4);
+      border-radius: 12px; padding: 20px;
+    }
+    .ai-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .ai-header h3 { margin: 0; font-size: 16px; }
+    .ai-status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 13px; color: var(--muted); }
+    .mood-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 700; text-transform: capitalize;
+      background: rgba(99,102,241,0.2); color: #a5b4fc;
+    }
+    .ai-section { margin-bottom: 18px; }
+    .ai-section-title { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .sentiment-row { display: grid; gap: 10px; }
+    .s-row { display: grid; grid-template-columns: 80px 1fr 40px; align-items: center; gap: 10px; font-size: 13px; }
+    .s-label { color: var(--muted); }
+    .s-track { height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; }
+    .s-fill { height: 100%; border-radius: 5px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+    .s-fill.pos { background: linear-gradient(90deg, #10b981, #059669); }
+    .s-fill.neu { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+    .s-fill.neg { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .s-pct { font-weight: 700; font-size: 13px; color: var(--fg); text-align: right; }
+    .s-clickable { cursor: pointer; border-radius: 6px; padding: 4px 6px; margin: -4px -6px; transition: background 0.15s; }
+    .s-clickable:hover { background: rgba(255,255,255,0.05); }
+    .s-active { background: rgba(255,255,255,0.07) !important; outline: 1px solid rgba(255,255,255,0.15); }
+    .themes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .theme-chip {
+      background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.2);
+      color: var(--accent); padding: 4px 12px; border-radius: 20px; font-size: 13px;
+    }
+    .ai-summary { font-size: 14px; line-height: 1.7; color: var(--fg); }
+    .insights { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+    .insights li {
+      font-size: 13px; color: var(--fg); padding: 10px 14px;
+      background: rgba(255,255,255,0.03); border-left: 3px solid rgba(139,92,246,0.5);
+      border-radius: 0 6px 6px 0; line-height: 1.5;
+    }
+    .ai-loading { display: flex; align-items: center; gap: 12px; padding: 20px; color: var(--muted); font-size: 14px; }
+    .ai-error { padding: 16px; color: #fca5a5; font-size: 14px; line-height: 1.5; }
+
+    #analyzeBtn {
+      display: none; background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      color: white; border: none; border-radius: 8px; padding: 9px 18px;
+      font-size: 14px; font-weight: 600; cursor: pointer; transition: filter 0.2s;
+    }
+    #analyzeBtn.visible { display: inline-flex; align-items: center; gap: 6px; }
+    #analyzeBtn:hover { filter: brightness(1.15); }
+    #analyzeBtn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="./index.html" class="logo">← EchoFlow</a>
+    <span class="nav-title">News Feed</span>
+  </nav>
+
+  <div class="container">
+
+    <!-- Category tabs -->
+    <div class="cat-tabs" id="catTabs">
+      <div class="cat-tab active" data-cat="us">🇺🇸 US News</div>
+      <div class="cat-tab" data-cat="tech">💻 Tech</div>
+      <div class="cat-tab" data-cat="gaming">🎮 Gaming</div>
+      <div class="cat-tab" data-cat="esports">🏆 Esports</div>
+      <div class="cat-tab" data-cat="finland">🇫🇮 Finland</div>
+    </div>
+
+    <!-- Feed selector -->
+    <div id="feedSelector">
+      <div class="feed-controls">
+        <button id="selectAll">Select all</button>
+        <button id="selectNone">None</button>
+        <span class="feed-count" id="feedCount"></span>
+      </div>
+      <div class="feed-grid" id="feedGrid"></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="news-actions">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)">
+        Limit per feed
+        <input type="number" id="limitInput" min="1" max="50" value="10"
+          style="width:60px;padding:4px 8px;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:6px;color:var(--fg)" />
+      </label>
+      <button id="loadBtn">Load News</button>
+      <button id="analyzeBtn">✦ Analyze with AI</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <!-- AI panel -->
+    <div id="aiPanel">
+      <div class="ai-card">
+        <div class="ai-header">
+          <span class="badge-ai">AI</span>
+          <h3>News Analysis</h3>
+        </div>
+        <div id="aiContent"></div>
+      </div>
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <script src="./news.js"></script>
+</body>
+</html>
