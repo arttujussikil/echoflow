@@ -2,36 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Reddit Explorer – EchoFlow</title>
+  <title>Search – EchoFlow</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./styles.css" />
+  <style>
+    /* Platform chips */
+    .platform-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .platform-chip {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 12px; cursor: pointer;
+      font-size: 13px; color: var(--muted); transition: all 0.15s;
+      user-select: none;
+    }
+    .platform-chip input { display: none; }
+    .platform-chip:hover { border-color: var(--accent); color: var(--fg); }
+    .platform-chip.selected { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+    .platform-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background 0.15s; }
+    .platform-chip.selected .dot { background: var(--accent); }
+
+    /* AI panel */
+    #aiPanel { display: none; margin-bottom: 16px; }
+    #aiPanel.visible { display: block; }
+    .ai-card {
+      background: var(--card); border: 1px solid rgba(139,92,246,0.4);
+      border-radius: 12px; padding: 20px;
+    }
+    .ai-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .ai-header h3 { margin: 0; font-size: 16px; }
+    .ai-status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 13px; color: var(--muted); }
+    .mood-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 700; text-transform: capitalize;
+      background: rgba(99,102,241,0.2); color: #a5b4fc;
+    }
+    .ai-section { margin-bottom: 18px; }
+    .ai-section-title { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .sentiment-row { display: grid; gap: 10px; }
+    .s-row { display: grid; grid-template-columns: 80px 1fr 40px; align-items: center; gap: 10px; font-size: 13px; }
+    .s-label { color: var(--muted); }
+    .s-track { height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; }
+    .s-fill { height: 100%; border-radius: 5px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+    .s-fill.pos { background: linear-gradient(90deg, #10b981, #059669); }
+    .s-fill.neu { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+    .s-fill.neg { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .s-pct { font-weight: 700; font-size: 13px; color: var(--fg); text-align: right; }
+    .themes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .theme-chip {
+      background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.2);
+      color: var(--accent); padding: 4px 12px; border-radius: 20px; font-size: 13px;
+    }
+    .ai-summary { font-size: 14px; line-height: 1.7; color: var(--fg); }
+    .insights { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+    .insights li {
+      font-size: 13px; color: var(--fg); padding: 10px 14px;
+      background: rgba(255,255,255,0.03); border-left: 3px solid rgba(139,92,246,0.5);
+      border-radius: 0 6px 6px 0; line-height: 1.5;
+    }
+    .ai-loading { display: flex; align-items: center; gap: 12px; padding: 20px; color: var(--muted); font-size: 14px; }
+    .ai-error { padding: 16px; color: #fca5a5; font-size: 14px; line-height: 1.5; }
+
+    /* Analyze button */
+    #analyzeBtn {
+      display: none; background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      color: white; border: none; border-radius: 8px; padding: 9px 18px;
+      font-size: 14px; font-weight: 600; cursor: pointer; transition: filter 0.2s;
+    }
+    #analyzeBtn.visible { display: inline-flex; align-items: center; gap: 6px; }
+    #analyzeBtn:hover { filter: brightness(1.15); }
+    #analyzeBtn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+    /* Platform badge on result cards */
+    .platform-badge {
+      display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+      border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .badge-reddit { background: rgba(255,69,0,0.15); color: #ff6b35; }
+    .badge-hackernews { background: rgba(255,102,0,0.15); color: #ff8c42; }
+    .badge-default { background: rgba(56,189,248,0.12); color: var(--accent); }
+
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+    .actions-right { display: flex; gap: 8px; margin-left: auto; }
+  </style>
 </head>
 <body>
   <nav class="topnav">
     <a href="./index.html" class="logo">← EchoFlow</a>
-    <span class="nav-title">Reddit Explorer</span>
+    <span class="nav-title">Search</span>
+    <div style="margin-left:auto;display:flex;gap:20px">
+      <a href="./news.html" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:600">News</a>
+      <a href="./analytics.html" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:600">Analytics</a>
+    </div>
   </nav>
 
   <div class="container">
     <form id="searchForm">
       <div class="grid">
-        <label>
-          Subreddits (comma-separated)
-          <input type="text" id="subreddits" placeholder="bitcoin,CryptoCurrency" required />
+
+        <!-- Platforms (populated by JS) -->
+        <label class="full-width" style="grid-column:1/-1">
+          Platforms
+          <div id="platformChips" class="platform-chips">
+            <span style="color:var(--muted);font-size:13px">Loading platforms…</span>
+          </div>
         </label>
 
         <label>
           Mode
           <select id="mode">
-            <option value="latest" selected>Latest (newest posts)</option>
-            <option value="top">Top (highest scored)</option>
-            <option value="search">Search (by keyword)</option>
+            <option value="latest" selected>Latest</option>
+            <option value="top">Top</option>
+            <option value="search">Search by keyword</option>
           </select>
         </label>
 
         <label id="keywordWrap" class="hidden">
-          Keyword (search mode only)
-          <input type="text" id="keyword" placeholder="ETF, Lightning, etc." />
+          Keyword
+          <input type="text" id="keyword" placeholder="e.g. TypeScript, AI, Bitcoin" />
+        </label>
+
+        <label id="channelsWrap">
+          <span id="channelsLabel">Channels</span>
+          <input type="text" id="channels" id="channels" placeholder="comma-separated" />
         </label>
 
         <label id="timeRangeWrap">
@@ -47,35 +139,31 @@
         </label>
 
         <label>
-          Posts per subreddit (limit)
+          Limit (per platform)
           <input type="number" id="limit" min="1" max="100" value="25" />
         </label>
 
         <fieldset class="full-width">
-          <legend>Sort posts</legend>
+          <legend>Sort results</legend>
           <label><input type="radio" name="postSort" value="" checked /> None</label>
-          <label><input type="radio" name="postSort" value="likes" /> Top liked (score)</label>
-          <label><input type="radio" name="postSort" value="comments" /> Most commented</label>
-          <label><input type="radio" name="postSort" value="recent" /> Newest</label>
+          <label><input type="radio" name="postSort" value="likes" /> By score</label>
+          <label><input type="radio" name="postSort" value="comments" /> By comments</label>
+          <label><input type="radio" name="postSort" value="recent" /> By date</label>
         </fieldset>
 
         <fieldset class="full-width">
-          <legend>Engagement filter</legend>
+          <legend>Min score filter</legend>
           <label>
-            Min score
-            <input type="number" id="minEngagement" min="0" step="1" placeholder="e.g. 50" />
+            Minimum engagement score
+            <input type="number" id="minEngagement" min="0" step="1" placeholder="e.g. 10" />
           </label>
         </fieldset>
 
         <fieldset class="full-width">
           <legend>Comments</legend>
-          <label><input type="checkbox" id="fetchComments" /> Include comments</label>
-          <label>
-            Count
-            <input type="number" id="commentLimit" min="1" max="50" value="5" />
-          </label>
-          <label>
-            Sort
+          <label><input type="checkbox" id="fetchComments" /> Fetch comments</label>
+          <label>Count <input type="number" id="commentLimit" min="1" max="50" value="5" /></label>
+          <label>Sort
             <select id="commentSort">
               <option value="top" selected>Top</option>
               <option value="best">Best</option>
@@ -86,17 +174,36 @@
       </div>
 
       <div class="actions">
-        <label style="display:flex;align-items:center;gap:.5rem;">
-          <input type="checkbox" id="persistToggle" />
-          Save results to database
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)">
+          <input type="checkbox" id="persistToggle" /> Save to database
         </label>
-        <button type="submit">Run</button>
-        <button type="button" id="viewHtml">Open HTML View</button>
-        <button type="button" id="downloadCsv">Download CSV</button>
+        <button type="submit">Search</button>
+        <div class="actions-right">
+          <button type="button" id="viewHtml">HTML view</button>
+          <button type="button" id="downloadCsv">Download CSV</button>
+        </div>
       </div>
     </form>
 
     <div id="status" class="status"></div>
+
+    <!-- AI section -->
+    <div id="aiPanel">
+      <div class="ai-card">
+        <div class="ai-header">
+          <span class="badge-ai">AI</span>
+          <h3>Analysis</h3>
+        </div>
+        <div id="aiContent">
+          <!-- populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Analyze button sits between status and results -->
+    <div style="margin-bottom:12px">
+      <button id="analyzeBtn">✦ Analyze with AI</button>
+    </div>
 
     <div id="results" class="results"></div>
   </div>
