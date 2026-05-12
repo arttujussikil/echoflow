@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   web:
     build: .
@@ -10,6 +8,7 @@ services:
       - "3000:3000"
     depends_on:
       - db
+      - ollama
     restart: unless-stopped
 
   db:
@@ -26,14 +25,24 @@ services:
       - ./src/db/init:/docker-entrypoint-initdb.d
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: echoflow-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
   adminer:
     image: adminer:4
     container_name: echoflow-adminer
     ports:
-      - "8080:8080"
+      - "8888:8080"
     depends_on:
       - db
     restart: unless-stopped
 
 volumes:
   db_data:
+  ollama_data:

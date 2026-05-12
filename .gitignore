@@ -40,3 +40,4 @@ docker-compose.override.yml
 # Database dumps
 *.sql.gz
 *.dump
+.claude
