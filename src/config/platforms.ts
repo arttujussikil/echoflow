@@ -1,18 +1,12 @@
-export const platforms = {
-    reddit: {
-        apiUrl: 'https://www.reddit.com',
-        searchEndpoint: '/search.json',
-        authRequired: false,
-    },
-    twitter: {
-        apiUrl: 'https://api.twitter.com',
-        searchEndpoint: '/2/tweets/search/recent',
-        authRequired: true,
-  
-    },
-    forums: {
-        apiUrl: 'https://example-forum.com',
-        searchEndpoint: '/api/search',
-        authRequired: false,
-    },
+/**
+ * Platform auth/env configuration.
+ * Collector metadata (capabilities, display names) lives in each collector class.
+ * Add credentials here when a collector requires authentication.
+ */
+export const platformConfig: Record<string, { apiKey?: string; clientId?: string; clientSecret?: string }> = {
+  twitter: {
+    apiKey: process.env.TWITTER_API_KEY,
+    clientId: process.env.TWITTER_CLIENT_ID,
+    clientSecret: process.env.TWITTER_CLIENT_SECRET,
+  },
 };

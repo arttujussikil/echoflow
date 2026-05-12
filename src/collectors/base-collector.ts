@@ -1,10 +1,44 @@
+import { Post } from '../models/post';
+
 export interface CollectorConfig {
   maxResults?: number;
   timeout?: number;
 }
 
+export interface SearchOptions {
+  mode?: 'search' | 'latest' | 'top';
+  timeRange?: string;
+  /** Platform-agnostic channel list: subreddits for Reddit, tags for HN, etc. */
+  channels?: string[];
+  limit?: number;
+}
+
+export interface CommentOptions {
+  limit?: number;
+  sort?: string;
+  delayMs?: number;
+}
+
+export interface CollectorCapabilities {
+  search: boolean;
+  latest: boolean;
+  top: boolean;
+  comments: boolean;
+  requiresAuth: boolean;
+}
+
+export interface PlatformInfo {
+  id: string;
+  displayName: string;
+  capabilities: CollectorCapabilities;
+}
+
 export abstract class BaseCollector {
   protected config: Required<CollectorConfig>;
+
+  abstract readonly platformId: string;
+  abstract readonly displayName: string;
+  abstract readonly capabilities: CollectorCapabilities;
 
   constructor(config: CollectorConfig = {}) {
     this.config = {
@@ -13,8 +47,22 @@ export abstract class BaseCollector {
     };
   }
 
-  // Concrete collectors must implement search
-  abstract search(keyword: string, timeRange: string, opts?: Record<string, any>): Promise<any[]>;
+  /**
+   * Unified search entry point. All modes (search/latest/top) go through here.
+   * keyword may be null for latest/top modes that don't need one.
+   */
+  abstract search(keyword: string | null, options?: SearchOptions): Promise<Post[]>;
+
+  /** Optional — only collectors with capabilities.comments implement this. */
+  fetchCommentsForPosts?(posts: Post[], opts?: CommentOptions): Promise<Post[]>;
+
+  getPlatformInfo(): PlatformInfo {
+    return {
+      id: this.platformId,
+      displayName: this.displayName,
+      capabilities: this.capabilities,
+    };
+  }
 
   protected validatePosts<T extends { id?: string; title?: string; content?: string }>(posts: T[]): T[] {
     return posts.filter(p => p.id && p.title && p.content) as T[];
@@ -30,13 +78,3 @@ export abstract class BaseCollector {
     return ranges[timeRange] ?? ranges.day;
   }
 }
-
-
-// When adding ForumCollector or TwitterCollector or whatever, you just extend BaseCollector and implement search()
-
-// Feature	                      Benefit
-
-// Abstract search()	            Forces every collector to have a .search() method with the same signature
-// validatePosts()	              Shared logic to filter out bad data
-// getTimeRangeInSeconds()	      Converts "week" → 604800 for APIs that need epoch timestamps
-// config defaults	              Every collector gets maxResults: 100, timeout: 30000 automatically
