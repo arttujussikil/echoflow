@@ -41,3 +41,5 @@ docker-compose.override.yml
 *.sql.gz
 *.dump
 .claude
+# Benchmark datasets (downloaded by npm run eval:data; see eval/datasets/README.md)
+eval/datasets/data/

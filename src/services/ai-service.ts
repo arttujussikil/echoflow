@@ -225,6 +225,14 @@ async function askJSON(
       logger.warn(`${task}: ${ref.provider}:${ref.model} failed, trying next: ${err.response?.status ?? ''} ${err.message} ${detail}`.trim());
     }
   }
+  const status = lastError?.response?.status;
+  if (status === 429) {
+    // Gemini's free tier allows only ~20 requests per model per day on new keys
+    throw new Error(only === 'gemini' || chain[chain.length - 1]?.provider === 'gemini'
+      ? 'Gemini free-tier limit reached (about 20 requests per model per day). Try again tomorrow.'
+      : 'AI provider rate limit reached. Wait a minute and try again.');
+  }
+  if (status === 503) throw new Error('The AI model is busy (free endpoint overloaded). Try again in a moment.');
   throw lastError;
 }
 
