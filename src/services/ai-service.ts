@@ -9,6 +9,8 @@ export interface AIAnalysis {
   sentiment: { positive: number; neutral: number; negative: number };
   /** One label per post sent, in order; null where the model gave no label */
   articleLabels?: (SentimentLabel | null)[];
+  /** Short reason for each label (same order), shown when hovering a post's mood */
+  articleReasons?: (string | null)[];
   themes: string[];
   summary: string;
   /** The model's own take on the results (shown as "AI's opinion") */
@@ -20,7 +22,15 @@ export interface AIAnalysis {
   labelledCount: number;
   analyzedAt: string;
   provider?: string;
+  language: AILanguage;
 }
+
+/** Language of the AI's written output (summary, opinion, reasons). Labels stay pos/neu/neg. */
+export type AILanguage = 'en' | 'fi';
+const LANGUAGE_RULE: Record<AILanguage, string> = {
+  en: 'Write all text values in English.',
+  fi: 'Write all text values in Finnish (suomeksi), even if the posts are in English.',
+};
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 const OLLAMA_HOST  = process.env.OLLAMA_HOST  || 'http://ollama:11434';
@@ -28,11 +38,12 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
 
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';
 /**
- * Comma-separated, tried in order. Picked with a hand-labelled benchmark of real
- * headlines (2026-10): nemotron-3-ultra ~94% correct in ~7 s but its free endpoint
- * is sometimes busy (503); nemotron-3-super ~86% in ~3 s is the backup.
+ * Comma-separated, tried in order. Picked with eval/sentiment-benchmark.ts
+ * (see docs/ai-design.md): with the labelling prompt below, nemotron-3-super got
+ * 98% and nemotron-3-ultra 97% on 50 hand-labelled posts; super is ~2x faster and
+ * ultra's free endpoint is often busy (503), so ultra is the backup.
  */
-const NVIDIA_MODELS = (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b,nvidia/nemotron-3-super-120b-a12b')
+const NVIDIA_MODELS = (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b')
   .split(',').map(m => m.trim()).filter(Boolean);
 const NVIDIA_BASE = 'https://integrate.api.nvidia.com/v1';
 
@@ -58,7 +69,8 @@ function extractJSON(raw: string): any {
 
 const JSON_SYSTEM = 'You are a JSON-only response API. Always respond with valid JSON and absolutely nothing else. No markdown, no code blocks, no explanations.';
 
-async function nvidiaJSON(model: string, prompt: string, maxTokens: number): Promise<any> {
+/** One NVIDIA NIM call that must return JSON. Exported for eval/sentiment-benchmark.ts. */
+export async function nvidiaJSON(model: string, prompt: string, maxTokens: number): Promise<any> {
   const { data } = await axios.post(
     `${NVIDIA_BASE}/chat/completions`,
     {
@@ -147,7 +159,7 @@ async function askJSON(
 // ── Per-post sentiment labels ──────────────────────────────────────────────────
 // Each post gets its own numbered key in the answer. A plain array ("one label per
 // post, in order") made models drift after ~10 items and fill the rest with "pos".
-function buildLabelPrompt(posts: Post[]): string {
+export function buildLabelPrompt(posts: Post[], language: AILanguage = 'en'): string {
   const lines = posts.map((p, i) => {
     const title = (p.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
     const body = (p.content ?? '').replace(/\s+/g, ' ').trim();
@@ -160,55 +172,75 @@ function buildLabelPrompt(posts: Post[]): string {
 pos = good news or a happy/approving tone (success, achievement, growth, praise, joy)
 neg = bad news or an unhappy/critical tone (harm, conflict, loss, accusations, bans, cuts, complaints, outrage)
 neu = factual, informational, a question, mixed or unclear
-Judge what the post actually reports or expresses, not single words: "halt work over environmental concerns" is neg; "best bets" for a game is neu; a match report is neu unless it clearly celebrates or laments.
+Judge what the post actually reports or expresses, not single words: "factory closes, 300 lose jobs" is neg even though "jobs" sounds positive; "top 10 picks for this weekend" is neu; a match report is neu unless it clearly celebrates or laments.
 Posts may be in Finnish or other languages.
 
 Posts:
 ${lines.join('\n')}
 
-Reply with ONLY a JSON object mapping every post number to "pos", "neu" or "neg", e.g. {"1":"neg","2":"neu"}. Include all ${posts.length} numbers.`;
+Reply with ONLY a JSON object with one key per post number. Each value has "s" (the label: "pos", "neu" or "neg") and "r" (the reason, max 8 words), e.g.
+{"1":{"s":"neg","r":"factory closing, jobs lost"},"2":{"s":"neu","r":"listing picks, no opinion"}}
+Include all ${posts.length} numbers. ${LANGUAGE_RULE[language]}`;
 }
 
 const VALID_LABELS = new Set<SentimentLabel>(['pos', 'neu', 'neg']);
 
-function readLabels(parsed: any, count: number): (SentimentLabel | null)[] {
+export interface LabelResult {
+  labels: (SentimentLabel | null)[];
+  reasons: (string | null)[];
+}
+
+/** Accepts {"1":{"s":"neg","r":"..."}} and the plain {"1":"neg"} form. */
+export function readLabels(parsed: any, count: number): LabelResult {
   const src = parsed?.labels && typeof parsed.labels === 'object' ? parsed.labels : parsed;
-  return Array.from({ length: count }, (_, i) => {
-    const v = String(src?.[String(i + 1)] ?? '').toLowerCase().slice(0, 3) as SentimentLabel;
-    return VALID_LABELS.has(v) ? v : null;
-  });
+  const labels: (SentimentLabel | null)[] = [];
+  const reasons: (string | null)[] = [];
+  for (let i = 0; i < count; i++) {
+    const entry = src?.[String(i + 1)];
+    const isObj = typeof entry === 'object' && entry !== null;
+    const raw = isObj ? entry.s ?? entry.label ?? entry.sentiment : entry;
+    const v = String(raw ?? '').toLowerCase().slice(0, 3) as SentimentLabel;
+    labels.push(VALID_LABELS.has(v) ? v : null);
+    const r = isObj ? entry.r ?? entry.reason : null;
+    reasons.push(typeof r === 'string' && r.trim() ? r.trim().slice(0, 120) : null);
+  }
+  return { labels, reasons };
 }
 
-async function labelBatch(posts: Post[]): Promise<{ labels: (SentimentLabel | null)[]; provider: string }> {
+async function labelBatch(posts: Post[], language: AILanguage): Promise<LabelResult & { provider: string }> {
   // Reject answers that cover less than 80% of the batch so the next model gets a go
-  const enough = (parsed: any) => readLabels(parsed, posts.length).filter(Boolean).length >= posts.length * 0.8;
-  const { parsed, provider } = await askJSON(buildLabelPrompt(posts), `label ${posts.length} posts`, 1500, enough);
-  return { labels: readLabels(parsed, posts.length), provider };
+  const enough = (parsed: any) => readLabels(parsed, posts.length).labels.filter(Boolean).length >= posts.length * 0.8;
+  // A short reason per post makes the answer ~1-2k tokens for a batch of 40
+  const { parsed, provider } = await askJSON(buildLabelPrompt(posts, language), `label ${posts.length} posts`, 3000, enough);
+  return { ...readLabels(parsed, posts.length), provider };
 }
 
-export async function labelSentiment(posts: Post[]): Promise<{ labels: (SentimentLabel | null)[]; provider?: string }> {
+export async function labelSentiment(posts: Post[], language: AILanguage = 'en'): Promise<LabelResult & { provider?: string }> {
   const batches: Post[][] = [];
   for (let i = 0; i < Math.min(posts.length, MAX_LABELLED); i += LABEL_BATCH) {
     batches.push(posts.slice(i, Math.min(i + LABEL_BATCH, MAX_LABELLED)));
   }
-  const results = await Promise.allSettled(batches.map(labelBatch));
+  const results = await Promise.allSettled(batches.map(b => labelBatch(b, language)));
   const labels: (SentimentLabel | null)[] = [];
+  const reasons: (string | null)[] = [];
   let provider: string | undefined;
   results.forEach((r, i) => {
     if (r.status === 'fulfilled') {
       labels.push(...r.value.labels);
+      reasons.push(...r.value.reasons);
       provider ??= r.value.provider;
     } else {
       logger.warn(`Labelling batch ${i + 1} failed: ${r.reason?.message}`);
       labels.push(...batches[i].map(() => null));
+      reasons.push(...batches[i].map(() => null));
     }
   });
-  while (labels.length < posts.length) labels.push(null);
-  return { labels, provider };
+  while (labels.length < posts.length) { labels.push(null); reasons.push(null); }
+  return { labels, reasons, provider };
 }
 
 // ── Summary / opinion ──────────────────────────────────────────────────────────
-function buildSummaryPrompt(posts: Post[], keyword?: string): string {
+function buildSummaryPrompt(posts: Post[], keyword: string | undefined, language: AILanguage): string {
   const lines = posts.slice(0, SUMMARY_POSTS).map((p, i) => {
     const topComment = (p.comments ?? [])[0];
     const commentLine = topComment ? `\n  top comment: ${(topComment.body ?? '').substring(0, 100)}` : '';
@@ -235,7 +267,8 @@ Return this JSON (replace the example values):
 Rules:
 - sentiment percentages add up to 100 (bad news and criticism count as negative)
 - mood is one of: excited, curious, frustrated, critical, positive, negative, mixed, neutral
-- Posts may be in Finnish or other languages; analyse their meaning regardless of language`;
+- Posts may be in Finnish or other languages; analyse their meaning regardless of language
+- ${LANGUAGE_RULE[language]} Keep the JSON keys and the mood value in English.`;
 }
 
 const VALID_MOODS = new Set(['excited', 'curious', 'frustrated', 'critical', 'positive', 'negative', 'mixed', 'neutral']);
@@ -259,11 +292,11 @@ function strings(v: any, max: number): string[] {
  *  - a sentiment label for every post (batched)
  * The sentiment bar is computed from the labels so it always matches the coloured list.
  */
-export async function analyzeWithAI(posts: Post[], keyword?: string): Promise<AIAnalysis> {
+export async function analyzeWithAI(posts: Post[], keyword?: string, language: AILanguage = 'en'): Promise<AIAnalysis> {
   logger.info(`AI analysis of ${posts.length} posts${keyword ? ` about "${keyword}"` : ''}`);
   const [summaryRes, labelRes] = await Promise.allSettled([
-    askJSON(buildSummaryPrompt(posts, keyword), 'summary', 2048, p => typeof p?.summary === 'string'),
-    labelSentiment(posts),
+    askJSON(buildSummaryPrompt(posts, keyword, language), 'summary', 2048, p => typeof p?.summary === 'string'),
+    labelSentiment(posts, language),
   ]);
 
   if (summaryRes.status === 'rejected' && (labelRes.status === 'rejected' || !labelRes.value.labels.some(Boolean))) {
@@ -272,6 +305,7 @@ export async function analyzeWithAI(posts: Post[], keyword?: string): Promise<AI
 
   const summary = summaryRes.status === 'fulfilled' ? summaryRes.value.parsed : {};
   const labels = labelRes.status === 'fulfilled' ? labelRes.value.labels : posts.map(() => null);
+  const reasons = labelRes.status === 'fulfilled' ? labelRes.value.reasons : posts.map(() => null);
   const labelled = labels.filter(Boolean) as SentimentLabel[];
 
   let sentiment: AIAnalysis['sentiment'];
@@ -289,6 +323,7 @@ export async function analyzeWithAI(posts: Post[], keyword?: string): Promise<AI
   return {
     sentiment,
     articleLabels: labels,
+    articleReasons: reasons,
     labelledCount: labelled.length,
     themes: strings(summary.themes, 8),
     summary: typeof summary.summary === 'string' ? summary.summary : '',
@@ -297,6 +332,7 @@ export async function analyzeWithAI(posts: Post[], keyword?: string): Promise<AI
     insights: strings(summary.insights, 4),
     postCount: posts.length,
     analyzedAt: new Date().toISOString(),
+    language,
     provider: summaryRes.status === 'fulfilled'
       ? summaryRes.value.provider
       : labelRes.status === 'fulfilled' ? labelRes.value.provider : undefined,

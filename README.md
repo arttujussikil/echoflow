@@ -4,6 +4,8 @@
 
 EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news APIs from [public-apis](https://github.com/public-apis/public-apis#news) in parallel. It analyses the results with NVIDIA NIM (free cloud) or local Ollama and shows everything on a single page, colour-coded by mood. Everything runs in Docker: one command and you're up.
 
+EchoFlow is a school project for an AI course. **How the AI part works, how we chose the model and what we learned about prompting: [docs/ai-design.md](docs/ai-design.md).**
+
 ---
 
 ## Table of Contents
@@ -16,6 +18,7 @@ EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news
 - [Environment Variables](#environment-variables)
 - [Supported Sources](#supported-sources)
 - [The UI](#the-ui)
+- [AI evaluation](#ai-evaluation)
 - [API Reference](#api-reference)
 - [Adding a New Platform](#adding-a-new-platform)
 - [Project Structure](#project-structure)
@@ -29,7 +32,9 @@ EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news
 
 - **One page, one search box** — type `News, Finland` and every comma-separated topic is searched across all enabled sources at once
 - **Top 10 + AI side by side** — most popular / latest posts on the left; AI summary, the AI's own opinion, themes and a colour-coded mood bar on the right
-- **Colour-coded results** — every post is marked green (positive), grey (neutral) or red (negative); click a mood to filter
+- **Colour-coded results** — the AI labels every post green (positive), grey (neutral) or red (negative) and says why in a few words; click a mood to filter
+- **Measured, not guessed** — `npm run eval` scores models on 50 hand-labelled posts; the chosen model gets 98% vs 64% for a keyword list ([details](docs/ai-design.md))
+- **English or Finnish** — the AI can write its summary, opinion and reasons in Finnish (Settings)
 - **Quick-search buttons** — News, Finland, Football, Tech… Add your own, and optionally attach a curated RSS feed bundle (World, Finland, Tech, Gaming, Esports)
 - **Free sources only** — 6 sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings)
 - **Free AI, two tiers** — set `NVIDIA_API_KEY` for high-accuracy cloud inference via [NVIDIA NIM](https://build.nvidia.com) (free endpoint); falls back to local Ollama automatically
@@ -65,7 +70,7 @@ EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  AI Provider (priority order)                            │  │
-│  │  1. NVIDIA NIM — nemotron-3 ultra → super (free cloud)   │  │
+│  │  1. NVIDIA NIM — nemotron-3 super → ultra (free cloud)   │  │
 │  │  2. Ollama     — llama3.2:3b (local Docker fallback)     │  │
 │  │  POST /api/analytics/analyze → sentiment, summary,       │  │
 │  │  opinion, themes, insights, per-post labels — free       │  │
@@ -192,7 +197,7 @@ npm start      # run compiled output
 | `DB_PASSWORD` | — | **Required** — set before first run |
 | `DB_NAME` | `echoflow` | Postgres database name |
 | `NVIDIA_API_KEY` | — | Free NVIDIA NIM API key — get one at [build.nvidia.com](https://build.nvidia.com). When set, used as **primary** AI provider. |
-| `NVIDIA_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b,nvidia/nemotron-3-super-120b-a12b` | NVIDIA NIM model IDs, comma-separated, tried in order |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b` | NVIDIA NIM model IDs, comma-separated, tried in order |
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (used when no NVIDIA key) |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Optional Reddit OAuth app. Without it, Reddit search falls back to RSS (no scores) |
@@ -204,9 +209,11 @@ npm start      # run compiled output
 
 | Model | Notes |
 |---|---|
-| `nvidia/nemotron-3-ultra-550b-a55b` | **Default, first choice** — ~94% correct on our hand-labelled headline benchmark, ~7 s; free endpoint is sometimes busy |
-| `nvidia/nemotron-3-super-120b-a12b` | **Default backup** — ~86%, ~3 s |
-| `nvidia/nemotron-3.5-lightning-30b-a3b` | ~81%; mislabels obvious bad news as positive — not recommended |
+| `nvidia/nemotron-3-super-120b-a12b` | **Default, first choice** — 98% on our 50-post sentiment benchmark, ~14 s per 50 posts |
+| `nvidia/nemotron-3-ultra-550b-a55b` | **Default backup** — 97%, ~20 s; free endpoint is often busy (503) |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | 87% — not recommended |
+
+Numbers from `npm run eval` on 2026-10-09; see [AI evaluation](#ai-evaluation).
 
 NVIDIA retires models from time to time (e.g. `mistralai/mistral-nemotron` now returns HTTP 410). If analysis falls back to Ollama, check the server log and pick a current model from `https://integrate.api.nvidia.com/v1/models`.
 
@@ -267,10 +274,34 @@ A single page at `http://localhost:3000`:
 3. **Top 10** (left): most popular by engagement, or latest.
 4. **AI analysis** (right): mood bar (green / grey / red), summary, the AI's own opinion, themes and insights. Click a mood to filter the list below.
 5. **All results**, colour-coded by mood and filterable by mood and source. The AI labels every result (up to 200) and the mood bar is counted from those labels; a `*` after the mood means the AI couldn't label that post and it was estimated from keywords.
+6. **Why a colour?** Each post shows the AI's reason next to its mood (e.g. *negative — forest cleared for data centre*); hover a dot in the Top 10 to see it.
 
 **Settings (⚙, top right):** export/import CSV & JSON, time range, results per source, quick-search buttons, sources + API keys, AI provider info.
 
 Old URLs (`/ui/news`, `/ui/reddit`, `/ui/analytics.html`, …) redirect to the main page. `/?q=News,Finland` opens a search directly.
+
+---
+
+## AI evaluation
+
+How good is the mood labelling? `eval/sentiment-benchmark.ts` runs the app's own labelling prompt against 50 hand-labelled posts ([`eval/headlines.json`](eval/headlines.json)) and compares models with a keyword list.
+
+```bash
+npm run eval                                          # default models, 2 runs each
+npm run eval -- --prompt both --runs 3 --out eval/results/my-run.md
+```
+
+Latest results ([full report](eval/results/2026-10-09.md)):
+
+| Method | Accuracy |
+|---|---|
+| Keyword list (no AI) | 64% |
+| Nemotron 3 Super (default) | **98%** |
+| Nemotron 3 Ultra (backup) | 97% |
+| Nemotron 3.5 Lightning | 87% |
+| Same models with the old "ordered list" prompt | 35–62% |
+
+Method, prompt design and limitations: [docs/ai-design.md](docs/ai-design.md).
 
 ---
 
@@ -364,7 +395,7 @@ Runs AI analysis on up to 200 posts. Two requests run in parallel: a summary/opi
 
 ```jsonc
 // Request
-{ "posts": [...], "keyword": "Counter-Strike" }
+{ "posts": [...], "keyword": "Counter-Strike", "language": "en" }   // language: "en" | "fi"
 
 // Response
 {
@@ -373,11 +404,13 @@ Runs AI analysis on up to 200 posts. Two requests run in parallel: a summary/opi
   "summary":    "Community discussion focuses on recent tournament results...",
   "opinion":    "The hype looks justified: results back it up, but the roster worries are real.",
   "articleLabels": ["pos", "neu", "neg", null, "..."], // one per post sent, in order (null = not labelled)
+  "articleReasons": ["record attendance", "match preview", "star player injured", null, "..."],
   "labelledCount": 87,
   "mood":       "excited",
   "insights":   ["Team roster changes are the dominant topic.", "Sentiment spikes around major announcements."],
   "postCount":  25,
-  "provider":   "nvidia:nvidia/nemotron-3-ultra-550b-a55b",
+  "provider":   "nvidia:nvidia/nemotron-3-super-120b-a12b",
+  "language":   "en",
   "analyzedAt": "2026-05-12T10:00:00.000Z"
 }
 ```
@@ -392,7 +425,8 @@ Returns 503 if Ollama is not yet ready (first pull can take a few minutes).
 {
   "available":   true,
   "model":       "llama3.2:3b",
-  "nvidiaModel": "nvidia/nemotron-3-ultra-550b-a55b",
+  "nvidiaModel": "nvidia/nemotron-3-super-120b-a12b",
+  "nvidiaModels": ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b"],
   "host":        "http://ollama:11434",
   "nvidia":      true
 }
@@ -526,8 +560,14 @@ echoflow/
 ├── public/
 │   ├── index.html                     # The single page
 │   ├── app.js                         # Search, Top 10, AI panel, results, settings, export/import
+│   ├── sentiment-keywords.js          # Keyword mood fallback (also the benchmark baseline)
 │   └── styles.css
+├── eval/
+│   ├── sentiment-benchmark.ts         # npm run eval — model/prompt accuracy benchmark
+│   ├── headlines.json                 # 50 hand-labelled posts
+│   └── results/                       # Saved benchmark reports
 ├── docs/
+│   ├── ai-design.md                   # How the AI analysis works, model choice, prompt lessons, limits
 │   ├── overview.md                    # Architecture + quick reference
 │   ├── reddit_guide.md                # Multi-platform search guide + RSS examples
 │   └── database.md                    # Schema + query examples

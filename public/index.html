@@ -148,12 +148,20 @@
       <section class="set">
         <h3>AI</h3>
         <p id="aiInfo" class="hint">Checking…</p>
+        <label class="field">AI writes in
+          <select id="aiLanguage">
+            <option value="en">English</option>
+            <option value="fi">Suomi (Finnish)</option>
+          </select>
+        </label>
+        <p class="hint">Summary, opinion, themes and the reason behind each post's mood.</p>
       </section>
     </div>
   </aside>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+  <script src="/sentiment-keywords.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

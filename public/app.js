@@ -67,6 +67,7 @@ const DEFAULT_SETTINGS = {
   timeRange: 'week',
   perSource: 15,
   disabledSources: [],
+  aiLanguage: 'en',     // language the AI writes in: 'en' | 'fi'
   apiKeys: {},
   quick: DEFAULT_QUICK,
 };
@@ -102,33 +103,7 @@ let feedFilter = { sent: '', source: '', sort: 'popular', shown: FEED_PAGE };
 
 const $ = id => document.getElementById(id);
 
-// ── Mood (keyword fallback until / unless the AI labels a post) ────────────────
-const POS_WORDS = new Set(`win wins won victory champion champions breakthrough launch launches launched deal
-agreement approved peace ceasefire rescue rescued survive survived recover recovery growth grow grows improve improved
-boost boosted rise rising gain gains increase expand upgrade advance progress success successful celebrate
-celebration positive promising innovative innovation profit profits revenue invest investment funding partnership hire
-hiring jobs save saved protect benefit achieve achievement solve solved solution cure vaccine effective discover
-discovery love amazing awesome excellent happy bullish
-voitti voitto kasvu paranee sopimus pelasti menestys investoi kehitys edistys hyväksyttiin`.split(/\s+/));
-
-const NEG_WORDS = new Set(`dead death deaths die dies died kill kills killed murder shooting shot attack attacks attacked
-explosion bomb bombing terror terrorist war wars conflict battle riot violence violent crash crashed disaster
-catastrophe crisis emergency flood earthquake hurricane wildfire fire collapse collapsed epidemic pandemic outbreak
-arrest arrested charged indicted convicted sentenced prison scandal corruption fraud hack hacked breach stolen theft
-abuse fail fails failed failure bankrupt bankruptcy recession decline declined drop dropped loss losses lose lost cut
-cuts layoff layoffs fired resign shutdown ban banned sanction sanctions threat threats warning danger dangerous toxic
-harm damage injured hurt wounded suffer bad terrible worst hate awful scam bearish halt halted halts accused accuses
-suspend suspended forfeit forfeits investigation lawsuit sucks concerns protest protests
-kuoli kuollut kuolema hyökkäys sota kriisi onnettomuus pidätettiin tuomittiin katastrofi tulva tulipalo räjähdys
-menetys konkurssi irtisanottiin uhka varoitus vaarallinen umpikuja kiista epäonnistui pakotteet kritiikki`.split(/\s+/));
-
-function keywordSentiment(post) {
-  const words = s => (s || '').toLowerCase().match(/[\p{L}]+/gu) || [];
-  let score = 0;
-  for (const w of words(post.title)) score += (POS_WORDS.has(w) ? 3 : 0) - (NEG_WORDS.has(w) ? 3 : 0);
-  for (const w of words((post.content || '').slice(0, 400))) score += (POS_WORDS.has(w) ? 1 : 0) - (NEG_WORDS.has(w) ? 1 : 0);
-  return score >= 2 ? 'positive' : score <= -2 ? 'negative' : 'neutral';
-}
+// keywordSentiment() comes from sentiment-keywords.js (fallback when the AI can't label a post)
 
 function popularity(p) {
   const e = p.engagement || {};
@@ -142,6 +117,7 @@ function prepare(posts) {
     _time: new Date(p.createdAt).getTime() || 0,
     _sent: p._sent || keywordSentiment(p),
     _ai: Boolean(p._ai),
+    _reason: p._reason || null,
   }));
   rankWithinPlatform(prepared);
   return prepared;
@@ -272,6 +248,7 @@ async function runAI(seq = searchSeq) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         keyword: current.query || undefined,
+        language: settings.aiLanguage,
         // Only what the AI needs — keeps the request small with 200 posts
         posts: sample.map(p => ({
           id: p.id, platform: p.platform, title: p.title, content: (p.content || '').slice(0, 400),
@@ -286,7 +263,11 @@ async function runAI(seq = searchSeq) {
     const labelMap = { pos: 'positive', neu: 'neutral', neg: 'negative' };
     // Posts the AI could not label keep their keyword estimate (shown with *)
     (data.articleLabels || []).forEach((label, i) => {
-      if (sample[i] && labelMap[label]) { sample[i]._sent = labelMap[label]; sample[i]._ai = true; }
+      if (sample[i] && labelMap[label]) {
+        sample[i]._sent = labelMap[label];
+        sample[i]._ai = true;
+        sample[i]._reason = data.articleReasons?.[i] || null;
+      }
     });
     current.analysis = data;
     current.analysisError = null;
@@ -366,7 +347,7 @@ function renderTop() {
     <li>
       <div>
         <a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
-        <div class="top-meta"><span class="dot dot--${p._sent}" title="${p._sent}${p._ai ? ' (AI)' : ''}"></span>${esc(sourceLabel(p))} · ${timeAgo(p._time)}</div>
+        <div class="top-meta"><span class="dot dot--${p._sent}" title="${esc(moodTitle(p))}"></span>${esc(sourceLabel(p))} · ${timeAgo(p._time)}</div>
       </div>
       <span class="top-score">${engagementLabel(p)}</span>
     </li>`).join('');
@@ -496,13 +477,18 @@ function renderFeed() {
           ${engagementLabel(p) ? `<span>${engagementLabel(p)}</span>` : ''}
           ${p.author && p.author !== 'unknown' ? `<span>by ${esc(p.author)}</span>` : ''}
           ${multiKeyword ? kws.map(k => `<span class="tag">${esc(k)}</span>`).join('') : ''}
-          <span title="${p._ai ? 'Labelled by AI' : 'Keyword estimate'}"><span class="dot dot--${p._sent}"></span>${p._sent}${p._ai ? '' : '*'}</span>
+          <span class="item__mood" title="${esc(moodTitle(p))}"><span class="dot dot--${p._sent}"></span>${p._sent}${p._ai ? '' : '*'}${p._reason ? `<span class="item__reason"> — ${esc(p._reason)}</span>` : ''}</span>
         </div>
         ${showSnippet ? `<p class="item__snippet">${esc(snippet.slice(0, 240))}${snippet.length > 240 ? '…' : ''}</p>` : ''}
       </li>`;
   }).join('') || `<li class="ai-foot">No posts match these filters.</li>`;
 
   $('moreBtn').hidden = filtered.length <= feedFilter.shown;
+}
+
+function moodTitle(p) {
+  if (!p._ai) return `${p._sent} (keyword estimate, not checked by AI)`;
+  return `${p._sent} (AI)${p._reason ? `: ${p._reason}` : ''}`;
 }
 
 function sourceLabel(p) {
@@ -650,7 +636,7 @@ async function loadAIStatus() {
 }
 
 // ── Export / import ────────────────────────────────────────────────────────────
-const CSV_COLUMNS = ['platform', 'source', 'title', 'url', 'author', 'published', 'score', 'comments', 'sentiment', 'labelled_by', 'keyword', 'snippet'];
+const CSV_COLUMNS = ['platform', 'source', 'title', 'url', 'author', 'published', 'score', 'comments', 'sentiment', 'labelled_by', 'mood_reason', 'keyword', 'snippet'];
 
 function toCsv(posts) {
   const cell = v => {
@@ -659,7 +645,7 @@ function toCsv(posts) {
   };
   const rows = posts.map(p => [
     p.platform, sourceLabel(p), p.title, p.url, p.author, new Date(p._time).toISOString(),
-    p.engagement?.score ?? 0, p.engagement?.comments ?? 0, p._sent, p._ai ? 'ai' : 'keywords',
+    p.engagement?.score ?? 0, p.engagement?.comments ?? 0, p._sent, p._ai ? 'ai' : 'keywords', p._reason || '',
     (p.metadata?.keywords || [p.metadata?.keyword]).filter(Boolean).join('; '),
     (p.content || '').replace(/\s+/g, ' ').slice(0, 500),
   ].map(cell).join(','));
@@ -703,7 +689,9 @@ function exportName(ext) {
 }
 
 function exportJson() {
-  const results = current.results.map(({ _pop, _rank, _time, _sent, _ai, ...p }) => ({ ...p, sentiment: _sent, labelledBy: _ai ? 'ai' : 'keywords' }));
+  const results = current.results.map(({ _pop, _rank, _time, _sent, _ai, _reason, ...p }) => ({
+    ...p, sentiment: _sent, labelledBy: _ai ? 'ai' : 'keywords', moodReason: _reason || undefined,
+  }));
   download(exportName('json'), JSON.stringify({
     echoflow: 1, query: current.query, bundle: current.bundle, exportedAt: new Date().toISOString(),
     sources: current.sources, analysis: current.analysis, results,
@@ -721,11 +709,12 @@ async function importFile(file) {
       metadata: { source: (r.source || '').split(' · ').pop(), keyword: (r.keyword || '').split('; ')[0] || undefined },
       _sent: ['positive', 'neutral', 'negative'].includes(r.sentiment) ? r.sentiment : undefined,
       _ai: r.labelled_by === 'ai',
+      _reason: r.mood_reason || null,
     }));
   } else {
     const data = JSON.parse(text);
     if (!Array.isArray(data.results)) throw new Error('Not an EchoFlow export (no "results" array)');
-    posts = data.results.map(p => ({ ...p, _sent: p.sentiment, _ai: p.labelledBy === 'ai' }));
+    posts = data.results.map(p => ({ ...p, _sent: p.sentiment, _ai: p.labelledBy === 'ai', _reason: p.moodReason }));
     extra = { query: data.query, bundle: data.bundle, sources: data.sources, analysis: data.analysis };
   }
   if (!posts.length) throw new Error('The file has no rows');
@@ -805,6 +794,14 @@ $('settingsBtn').addEventListener('click', () => openSettings(true));
 $('closeSettings').addEventListener('click', () => openSettings(false));
 $('scrim').addEventListener('click', () => openSettings(false));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') openSettings(false); });
+
+$('aiLanguage').value = settings.aiLanguage || 'en';
+$('aiLanguage').addEventListener('change', () => {
+  settings.aiLanguage = $('aiLanguage').value;
+  saveSettings();
+  // Re-run the analysis so the change is visible right away
+  if (current?.results.length) { openSettings(false); runAI(); }
+});
 
 $('timeRange').value = settings.timeRange;
 $('timeRange').addEventListener('change', () => { settings.timeRange = $('timeRange').value; saveSettings(); });

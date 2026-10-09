@@ -236,6 +236,7 @@ button, input, select { font: inherit; color: inherit; }
 .item__title:hover { color: var(--accent); }
 .item__meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; }
 .item__src { font-weight: 700; color: var(--fg); }
+.item__reason { font-style: italic; }
 .item__snippet { font-size: 14px; color: var(--muted); margin: 6px 0 0; }
 .tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); }
 
