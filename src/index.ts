@@ -1,9 +1,8 @@
+// Must be the first import: other modules read process.env when they load
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
 import { logger } from './utils/logger';
 import { setupRoutes } from './api/server';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,6 +12,6 @@ setupRoutes(app);
 
 app.listen(PORT, () => {
   logger.info(`EchoFlow server running on port ${PORT}`);
-  logger.info(`UI available at http://localhost:${PORT}/ui/`);
+  logger.info(`UI available at http://localhost:${PORT}/`);
   logger.info(`API available at http://localhost:${PORT}/api`);
 });

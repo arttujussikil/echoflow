@@ -1,7 +1,7 @@
 {
   "name": "echoflow",
   "version": "1.0.0",
-  "description": "AI-powered sentiment and trend analysis engine that aggregates data from multiple platforms and exports structured insights to Power BI.",
+  "description": "One search box for news and social media, with AI mood analysis. Free sources only.",
   "main": "src/index.ts",
   "scripts": {
     "dev": "ts-node src/index.ts",

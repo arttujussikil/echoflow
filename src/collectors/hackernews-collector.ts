@@ -45,6 +45,7 @@ interface HNItemChild {
 export class HackerNewsCollector extends BaseCollector {
   readonly platformId = 'hackernews';
   readonly displayName = 'Hacker News';
+  readonly description = 'Tech discussion via the Algolia API. No key needed.';
   readonly capabilities: CollectorCapabilities = {
     search: true,
     latest: true,

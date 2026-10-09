@@ -251,21 +251,6 @@ function sortResults(results: Post[], sortBy: string): Post[] {
   }
 }
 
-/**
- * GET /api/search/:id
- * Fetch a previously persisted search result by ID.
- */
-searchRouter.get('/:id', async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    logger.info(`Fetching search results: ${id}`);
-    res.json({ id, status: 'not_implemented' });
-  } catch (error) {
-    logger.error('Fetch search error:', error);
-    res.status(500).json({ error: 'Failed to fetch results' });
-  }
-});
-
 /** GET /api/search/rate-limits — per-platform rate limit status */
 searchRouter.get('/rate-limits', (_req: Request, res: Response) => {
   const status: Record<string, any> = {};

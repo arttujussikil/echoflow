@@ -15,6 +15,8 @@ try {
 export class RSSCollector extends BaseCollector {
   readonly platformId = 'rss';
   readonly displayName = 'RSS / Atom Feeds';
+  readonly category = 'feed' as const;
+  readonly description = 'Any RSS or Atom feed URL.';
   readonly capabilities: CollectorCapabilities = {
     search: true,
     latest: true,
@@ -47,7 +49,6 @@ export class RSSCollector extends BaseCollector {
    *   https://feeds.arstechnica.com/arstechnica/index
    *   https://www.theverge.com/rss/index.xml
    *
-   * Note: Reddit RSS (*.rss) returns 403 — use the Reddit collector instead.
    * Note: Sites behind Cloudflare (e.g. HLTV forum threads) cannot be scraped.
    */
   async search(keyword: string | null, options: SearchOptions = {}): Promise<Post[]> {

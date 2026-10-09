@@ -23,25 +23,25 @@ EchoFlow is an AI-powered social media aggregator. It collects posts and comment
 
 ```
 public/
-  index.html          → Landing page / dashboard
-  reddit.html         → Universal search UI (all platforms)
-  app.js              → Client logic (platform chips, AI panel, results)
+  index.html          → The single page (search, Top 10, AI analysis, results, settings drawer)
+  app.js              → Client logic (search, quick buttons, AI panel, export/import)
   styles.css
 
 src/
   index.ts            → Express server entry point
   api/routes/
+    discover.ts       → POST /api/discover  (main search: all sources in parallel)
     search.ts         → POST /api/search  (multi-platform dispatch)
     analytics.ts      → POST /api/analytics/analyze  (AI analysis)
     reddit.ts         → Legacy /api/reddit/* endpoints
-    export.ts         → /api/export  (CSV / JSON)
   collectors/
     base-collector.ts     → Abstract base class + interfaces
     collector-registry.ts → Singleton registry (register once, use everywhere)
     index.ts              → Bootstrap: registers all collectors
     reddit-collector.ts   → Reddit public JSON API
     hackernews-collector.ts → HackerNews via Algolia API (free, no auth)
-    forum-collector.ts    → Stub template for future platforms
+    bluesky-collector.ts / lemmy-collector.ts / gnews-collector.ts / rss-collector.ts
+    news-api-collector.ts → Free news APIs from public-apis (Spaceflight, Guardian, NYT, GNews, …)
   services/
     ai-service.ts     → Ollama integration (analyzeWithAI, checkOllamaStatus)
   db/
@@ -178,8 +178,7 @@ docker compose logs -f web
 docker compose logs -f ollama   # watch model download progress
 
 # Access
-http://localhost:3000/ui/       # Landing page
-http://localhost:3000/ui/reddit # Universal search UI
+http://localhost:3000           # The app (single page)
 http://localhost:8888           # Adminer (DB admin)
 ```
 

@@ -11,6 +11,8 @@ export interface SearchOptions {
   /** Platform-agnostic channel list: subreddits for Reddit, tags for HN, etc. */
   channels?: string[];
   limit?: number;
+  /** Per-request API key (e.g. pasted by the user in the UI settings). Overrides the env key. */
+  apiKey?: string;
 }
 
 export interface CommentOptions {
@@ -27,10 +29,24 @@ export interface CollectorCapabilities {
   requiresAuth: boolean;
 }
 
+/** social = discussion platforms, news = news APIs, feed = raw RSS/Atom */
+export type SourceCategory = 'social' | 'news' | 'feed';
+
+export interface ApiKeyInfo {
+  /** Env var the server reads the key from, e.g. GUARDIAN_API_KEY */
+  envVar: string;
+  /** Where a free key can be obtained */
+  signupUrl: string;
+}
+
 export interface PlatformInfo {
   id: string;
   displayName: string;
+  category: SourceCategory;
+  description?: string;
   capabilities: CollectorCapabilities;
+  /** Present when the source needs an API key */
+  apiKey?: ApiKeyInfo & { configured: boolean };
 }
 
 export abstract class BaseCollector {
@@ -39,6 +55,9 @@ export abstract class BaseCollector {
   abstract readonly platformId: string;
   abstract readonly displayName: string;
   abstract readonly capabilities: CollectorCapabilities;
+  readonly category: SourceCategory = 'social';
+  readonly description?: string;
+  readonly apiKeyInfo?: ApiKeyInfo;
 
   constructor(config: CollectorConfig = {}) {
     this.config = {
@@ -56,11 +75,27 @@ export abstract class BaseCollector {
   /** Optional — only collectors with capabilities.comments implement this. */
   fetchCommentsForPosts?(posts: Post[], opts?: CommentOptions): Promise<Post[]>;
 
+  /** Key from the request if given, otherwise from the environment. */
+  protected resolveApiKey(options?: SearchOptions): string {
+    if (options?.apiKey) return options.apiKey;
+    return this.apiKeyInfo ? process.env[this.apiKeyInfo.envVar] || '' : '';
+  }
+
+  /** True when the source can run without a per-request key. */
+  isReady(): boolean {
+    return !this.apiKeyInfo || Boolean(process.env[this.apiKeyInfo.envVar]);
+  }
+
   getPlatformInfo(): PlatformInfo {
     return {
       id: this.platformId,
       displayName: this.displayName,
+      category: this.category,
+      description: this.description,
       capabilities: this.capabilities,
+      ...(this.apiKeyInfo
+        ? { apiKey: { ...this.apiKeyInfo, configured: this.isReady() } }
+        : {}),
     };
   }
 
@@ -73,8 +108,16 @@ export abstract class BaseCollector {
       hour: 3600,
       day: 86400,
       week: 604800,
-      month: 2592000
+      month: 2592000,
+      year: 31536000,
+      all: 0,
     };
     return ranges[timeRange] ?? ranges.day;
+  }
+
+  /** Start of the time range as a Date, or null for 'all'. */
+  protected sinceDate(timeRange: string): Date | null {
+    const s = this.getTimeRangeInSeconds(timeRange);
+    return s ? new Date(Date.now() - s * 1000) : null;
   }
 }

@@ -4,6 +4,9 @@ import { Post, Comment } from '../models/post';
 import { logger } from '../utils/logger';
 import { handleAPIError } from '../utils/errors';
 
+let ParserClass: any;
+try { ParserClass = require('rss-parser'); } catch { ParserClass = null; }
+
 interface RedditResponse {
   data: {
     children: RedditPost[];
@@ -44,6 +47,7 @@ interface RedditCommentItem {
 export class RedditCollector extends BaseCollector {
   readonly platformId = 'reddit';
   readonly displayName = 'Reddit';
+  readonly description = 'Reddit posts. Works without a key (RSS fallback); OAuth adds scores.';
   readonly capabilities: CollectorCapabilities = {
     search: true,
     latest: true,
@@ -52,10 +56,45 @@ export class RedditCollector extends BaseCollector {
     requiresAuth: false,
   };
 
-  private readonly baseUrl = 'https://www.reddit.com';
-  private readonly userAgent = 'EchoFlow/1.0';
+  private readonly clientId     = process.env.REDDIT_CLIENT_ID     || '';
+  private readonly clientSecret = process.env.REDDIT_CLIENT_SECRET || '';
+  private readonly userAgent    = 'EchoFlow/1.0 by EchoFlowApp';
+  private get baseUrl()         { return this.clientId ? 'https://oauth.reddit.com' : 'https://www.reddit.com'; }
+
+  private oauthToken: string | null = null;
+  private oauthExpiry: number = 0;
+
   private rateLimitRemaining: number = 60;
   private rateLimitReset: number = Date.now() + 60000;
+
+  private async getHeaders(): Promise<Record<string, string>> {
+    if (!this.clientId || !this.clientSecret) {
+      return { 'User-Agent': this.userAgent };
+    }
+    if (!this.oauthToken || Date.now() >= this.oauthExpiry) {
+      await this.fetchOAuthToken();
+    }
+    return { 'User-Agent': this.userAgent, Authorization: `Bearer ${this.oauthToken}` };
+  }
+
+  private async fetchOAuthToken(): Promise<void> {
+    const creds = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    const resp = await axios.post(
+      'https://www.reddit.com/api/v1/access_token',
+      'grant_type=client_credentials',
+      {
+        headers: {
+          Authorization: `Basic ${creds}`,
+          'User-Agent': this.userAgent,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 10_000,
+      }
+    );
+    this.oauthToken = resp.data.access_token;
+    this.oauthExpiry = Date.now() + (resp.data.expires_in - 60) * 1000;
+    logger.info('Reddit OAuth token acquired');
+  }
 
   constructor(config?: CollectorConfig) {
     super(config);
@@ -86,11 +125,11 @@ export class RedditCollector extends BaseCollector {
       if (!keyword) throw new Error('keyword is required for search mode');
       if (channels.length > 0) {
         for (const sr of channels) {
-          const posts = await this._search(keyword, timeRange, sr);
+          const posts = await this._search(keyword, timeRange, effectiveLimit, sr);
           results.push(...posts);
         }
       } else {
-        const posts = await this._search(keyword, timeRange);
+        const posts = await this._search(keyword, timeRange, effectiveLimit);
         results.push(...posts);
       }
     }
@@ -128,7 +167,7 @@ export class RedditCollector extends BaseCollector {
       const url = `${this.baseUrl}/r/${subreddit}/comments/${postId}.json`;
       const resp = await axios.get(url, {
         params: { limit, sort, raw_json: 1, depth: 1 },
-        headers: { 'User-Agent': this.userAgent },
+        headers: await this.getHeaders(),
         timeout: this.config.timeout
       });
 
@@ -179,14 +218,14 @@ export class RedditCollector extends BaseCollector {
 
   // ── Private implementation ──────────────────────────────────────────────────
 
-  private async _search(keyword: string, timeRange: string, subreddit?: string): Promise<Post[]> {
+  private async _search(keyword: string, timeRange: string, limit: number, subreddit?: string): Promise<Post[]> {
     await this.checkRateLimit();
     try {
       const sr = subreddit?.trim();
       const path = sr ? `/r/${sr}/search.json` : `/search.json`;
       const params: Record<string, any> = {
         q: keyword,
-        limit: this.config.maxResults,
+        limit: Math.min(limit, 100),
         sort: 'new',
         t: this.mapTimeRange(timeRange),
         raw_json: 1
@@ -197,7 +236,7 @@ export class RedditCollector extends BaseCollector {
 
       const response = await axios.get<RedditResponse>(`${this.baseUrl}${path}`, {
         params,
-        headers: { 'User-Agent': this.userAgent },
+        headers: await this.getHeaders(),
         timeout: this.config.timeout
       });
 
@@ -205,9 +244,40 @@ export class RedditCollector extends BaseCollector {
       return this.validatePosts(this.transformRedditPosts(response.data.data.children));
     } catch (error: any) {
       const apiError = handleAPIError(error);
+      if (apiError.statusCode === 403 && !this.clientId && ParserClass) {
+        logger.info('Reddit JSON search blocked (403), falling back to RSS search');
+        return this._searchRss(keyword, timeRange, limit, subreddit);
+      }
       logger.error('Reddit search failed', { keyword, code: apiError.code, message: apiError.message });
       throw apiError;
     }
+  }
+
+  /** RSS search has no scores or comment counts, but needs no auth. */
+  private async _searchRss(keyword: string, timeRange: string, limit: number, subreddit?: string): Promise<Post[]> {
+    const sr = subreddit?.trim();
+    const path = sr ? `/r/${sr}/search.rss` : '/search.rss';
+    const params = new URLSearchParams({
+      q: keyword, sort: 'relevance', t: this.mapTimeRange(timeRange),
+      limit: String(Math.min(limit, 100)), ...(sr ? { restrict_sr: '1' } : {}),
+    });
+    const parser = new ParserClass({ timeout: this.config.timeout, headers: { 'User-Agent': this.userAgent } });
+    const feed = await parser.parseURL(`https://www.reddit.com${path}?${params}`);
+
+    return (feed.items as any[]).map((item): Post => {
+      const m = (item.link ?? '').match(/\/r\/([^/]+)\/comments\/([^/]+)/);
+      return {
+        id: m?.[2] ?? item.id ?? item.link,
+        platform: 'reddit',
+        title: item.title ?? '(no title)',
+        content: item.contentSnippet || item.title || '',
+        author: (item.author ?? '').replace(/^\/u\//, '') || 'unknown',
+        url: item.link,
+        createdAt: new Date(item.isoDate ?? item.pubDate ?? Date.now()),
+        engagement: { likes: 0, comments: 0, shares: 0, score: 0 },
+        metadata: { subreddit: m?.[1] },
+      };
+    }).filter(p => p.url).slice(0, limit);
   }
 
   private async _fetchLatest(subreddit: string, limit: number): Promise<Post[]> {
@@ -218,7 +288,7 @@ export class RedditCollector extends BaseCollector {
 
       const response = await axios.get<RedditResponse>(`${this.baseUrl}/r/${sr}/new.json`, {
         params: { limit: Math.min(limit, 100), raw_json: 1 },
-        headers: { 'User-Agent': this.userAgent },
+        headers: await this.getHeaders(),
         timeout: this.config.timeout
       });
 
@@ -239,7 +309,7 @@ export class RedditCollector extends BaseCollector {
 
       const response = await axios.get<RedditResponse>(`${this.baseUrl}/r/${sr}/top.json`, {
         params: { limit: Math.min(limit, 100), t: this.mapTimeRange(timeRange), raw_json: 1 },
-        headers: { 'User-Agent': this.userAgent },
+        headers: await this.getHeaders(),
         timeout: this.config.timeout
       });
 

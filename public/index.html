@@ -2,317 +2,158 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>EchoFlow – Social Media Analytics</title>
+  <title>EchoFlow</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./styles.css" />
-  <style>
-    /* Override container padding for homepage */
-    .container {
-      padding: 16px 24px !important;
-    }
-
-    /* Override and fix hero section */
-    .home-hero {
-      text-align: center;
-      padding: 28px 24px !important;
-      background: rgba(30, 41, 59, 0.7) !important;
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 16px;
-      margin-bottom: 24px;
-      min-height: auto !important;
-      display: block !important;
-      align-items: initial !important;
-      justify-content: initial !important;
-    }
-
-    .home-hero h1 {
-      font-size: 36px;
-      font-weight: 800;
-      margin: 0 0 12px 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      line-height: 1.1;
-    }
-
-    .home-hero p {
-      font-size: 15px;
-      color: var(--muted);
-      max-width: 650px;
-      margin: 0 auto 20px;
-      line-height: 1.6;
-    }
-
-    .hero-buttons {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-
-    .hero-btn {
-      padding: 12px 24px;
-      font-size: 14px;
-      font-weight: 700;
-      border-radius: 10px;
-      text-decoration: none;
-      transition: all 0.3s;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .hero-btn-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-    }
-
-    .hero-btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
-    }
-
-    .hero-btn-secondary {
-      background: rgba(59, 130, 246, 0.1);
-      color: var(--accent);
-      border: 2px solid var(--accent);
-    }
-
-    .hero-btn-secondary:hover {
-      background: rgba(59, 130, 246, 0.2);
-      transform: translateY(-2px);
-    }
-
-    .features {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-      margin-bottom: 28px;
-    }
-
-    .feature-card {
-      background: rgba(30, 41, 59, 0.7);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 16px;
-      padding: 24px 20px;
-      text-align: center;
-      transition: all 0.3s;
-      text-decoration: none;
-      display: block;
-      color: inherit;
-    }
-
-    .feature-card:hover {
-      transform: translateY(-8px);
-      border-color: rgba(59, 130, 246, 0.5);
-      box-shadow: 0 10px 30px rgba(59, 130, 246, 0.2);
-      background: rgba(30, 41, 59, 0.95);
-    }
-
-    .feature-icon {
-      font-size: 40px;
-      margin-bottom: 12px;
-      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
-    }
-
-    .feature-card h3 {
-      font-size: 18px;
-      font-weight: 700;
-      margin-bottom: 10px;
-      color: var(--text);
-    }
-
-    .feature-card p {
-      color: var(--muted);
-      line-height: 1.5;
-      font-size: 14px;
-    }
-
-    .cta-section {
-      text-align: center;
-      padding: 36px 20px;
-      background: rgba(30, 41, 59, 0.7);
-      border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .cta-section h2 {
-      font-size: 26px;
-      font-weight: 700;
-      margin-bottom: 10px;
-      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    .cta-section p {
-      font-size: 15px;
-      color: var(--muted);
-      margin-bottom: 20px;
-    }
-
-    .stats-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 18px;
-      margin-top: 28px;
-    }
-
-    .stat-box {
-      text-align: center;
-    }
-
-    .stat-number {
-      font-size: 34px;
-      font-weight: 800;
-      background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      display: block;
-    }
-
-    .stat-label {
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-top: 5px;
-    }
-
-    @media (max-width: 768px) {
-      .home-hero h1 {
-        font-size: 28px;
-      }
-
-      .home-hero p {
-        font-size: 14px;
-      }
-
-      .features {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+  <meta name="description" content="Search news and social media at once and get an AI read on the mood." />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <nav class="topnav">
-    <a href="./index.html" class="logo">EchoFlow</a>
-    <div style="margin-left: auto; display: flex; gap: 24px;">
-      <a href="./news.html" style="color: var(--muted); text-decoration: none; font-weight: 600;">News</a>
-      <a href="./reddit.html" style="color: var(--muted); text-decoration: none; font-weight: 600;">Search</a>
-      <a href="./analytics.html" style="color: var(--muted); text-decoration: none; font-weight: 600;">Analytics</a>
-    </div>
-  </nav>
+  <header class="topbar">
+    <a href="/" class="logo">echoflow</a>
+    <span id="aiPill" class="ai-pill" title="AI provider">AI: checking…</span>
+    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" aria-controls="settings" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+      <span>Settings</span>
+    </button>
+  </header>
 
-  <div class="container">
-    <!-- Hero Section -->
-    <div class="home-hero">
-      <h1>🌊 EchoFlow</h1>
-      <p>
-        Powerful social media analytics platform for multiple platforms all in one place. 
-        Discover trends, analyze sentiment, and uncover insights from online communities.
-      </p>
-      <div class="hero-buttons">
-        <a href="./analytics.html" class="hero-btn hero-btn-primary">
-          <span>📊</span> Start Analyzing
-        </a>
-        <a href="./news.html" class="hero-btn hero-btn-secondary">
-          <span>📰</span> Browse News
-        </a>
-        <a href="./reddit.html" class="hero-btn hero-btn-secondary">
-          <span>🔍</span> Search Posts
-        </a>
-      </div>
-    </div>
+  <main class="page">
+    <!-- Search -->
+    <form id="searchForm" class="search" role="search">
+      <svg class="search__icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
+      <input id="searchInput" class="search__input" type="search" autocomplete="off"
+        placeholder="Search everything — separate topics with commas, e.g. News, Finland"
+        aria-label="Search keywords" />
+      <button id="searchBtn" class="search__btn" type="submit">Search</button>
+    </form>
 
-    <!-- Features Section -->
-    <div class="features">
-      <a href="./news.html" class="feature-card">
-        <div class="feature-icon">📰</div>
-        <h3>Curated News</h3>
-        <p>One-click access to US news, tech, gaming, esports, and Finnish media from 40+ RSS/Atom feeds.</p>
-      </a>
+    <!-- Quick searches -->
+    <nav id="quickBar" class="quick" aria-label="Quick searches"></nav>
 
-      <a href="./analytics.html" class="feature-card">
-        <div class="feature-icon">📈</div>
-        <h3>Real-Time Analytics</h3>
-        <p>Track engagement metrics, sentiment trends, and top posts across Reddit, HackerNews, and any RSS feed.</p>
-      </a>
+    <!-- Source status after a search -->
+    <div id="sourceBar" class="sources" hidden></div>
 
-      <a href="./analytics.html" class="feature-card">
-        <div class="feature-icon">😊</div>
-        <h3>Sentiment Analysis</h3>
-        <p>Understand community mood with AI-powered sentiment detection. Click bars to filter posts by sentiment.</p>
-      </a>
+    <!-- Empty state -->
+    <section id="welcome" class="welcome">
+      <h1>What is the internet saying?</h1>
+      <p>One search runs across Reddit, Hacker News, Bluesky, Lemmy, Google News and the free news APIs you enable in Settings.
+        Then the AI sums it up, gives its own take and colours everything by mood.</p>
+    </section>
 
-      <a href="./analytics.html" class="feature-card">
-        <div class="feature-icon">🔥</div>
-        <h3>Trending Topics</h3>
-        <p>Automatically discover what's trending with keyword extraction and topic clustering.</p>
-      </a>
+    <!-- Results: summary + AI side by side -->
+    <section id="dashboard" class="dashboard" hidden>
+      <article class="card">
+        <header class="card__head">
+          <h2>Top 10</h2>
+          <div class="seg" role="tablist" aria-label="Top 10 order">
+            <button type="button" role="tab" class="seg__btn is-on" data-top="popular" aria-selected="true">Most popular</button>
+            <button type="button" role="tab" class="seg__btn" data-top="latest" aria-selected="false">Latest</button>
+          </div>
+        </header>
+        <div id="stats" class="stats"></div>
+        <ol id="topList" class="top-list"></ol>
+      </article>
 
-      <a href="./reddit.html" class="feature-card">
-        <div class="feature-icon">💬</div>
-        <h3>Comment Deep Dive</h3>
-        <p>Fetch and analyze top comments to understand discussions and community reactions.</p>
-      </a>
+      <article class="card card--ai">
+        <header class="card__head">
+          <h2>AI analysis</h2>
+          <span id="moodBadge" class="mood" hidden></span>
+        </header>
+        <div id="aiBody"></div>
+      </article>
+    </section>
 
-      <a href="./reddit.html" class="feature-card">
-        <div class="feature-icon">📊</div>
-        <h3>Export Reports</h3>
-        <p>Download your analysis as CSV or JSON for further processing and sharing.</p>
-      </a>
-
-      <div class="feature-card">
-        <div class="feature-icon">⚡</div>
-        <h3>Lightning Fast</h3>
-        <p>
-          Progressive loading and real-time updates keep you informed without the wait.
-        </p>
-      </div>
-    </div>
-
-    <!-- Stats Section -->
-    <div class="cta-section">
-      <h2>Built for Data Enthusiasts</h2>
-      <p>Whether you're a researcher, marketer, or curious explorer, EchoFlow has you covered.</p>
-      
-      <div class="stats-row">
-        <div class="stat-box">
-          <span class="stat-number">1M+</span>
-          <div class="stat-label">Posts Analyzed</div>
+    <!-- All results -->
+    <section id="feed" class="card feed" hidden>
+      <header class="card__head feed__head">
+        <h2>All results <span id="feedCount" class="muted"></span></h2>
+        <div class="feed__filters">
+          <div id="sentFilter" class="chips" aria-label="Filter by mood">
+            <button type="button" class="chip is-on" data-sent="">All</button>
+            <button type="button" class="chip chip--pos" data-sent="positive">Positive</button>
+            <button type="button" class="chip chip--neu" data-sent="neutral">Neutral</button>
+            <button type="button" class="chip chip--neg" data-sent="negative">Negative</button>
+          </div>
+          <select id="sourceFilter" aria-label="Filter by source"><option value="">All sources</option></select>
+          <select id="sortSelect" aria-label="Sort results">
+            <option value="popular">Most popular</option>
+            <option value="latest">Latest</option>
+          </select>
         </div>
-        <div class="stat-box">
-          <span class="stat-number">50+</span>
-          <div class="stat-label">Subreddits Tracked</div>
-        </div>
-        <div class="stat-box">
-          <span class="stat-number">Real-Time</span>
-          <div class="stat-label">Data Updates</div>
-        </div>
-      </div>
+      </header>
+      <ul id="feedList" class="feed__list"></ul>
+      <button id="moreBtn" class="ghost-btn" type="button" hidden>Show more</button>
+    </section>
+  </main>
 
-      <div style="margin-top: 28px;">
-        <a href="./analytics.html" class="hero-btn hero-btn-primary">
-          <span>🚀</span> Get Started Now
-        </a>
-      </div>
+  <!-- Settings drawer -->
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="settings" class="drawer" aria-label="Settings" aria-hidden="true">
+    <header class="drawer__head">
+      <h2>Settings</h2>
+      <button id="closeSettings" class="icon-btn" type="button" aria-label="Close settings">✕</button>
+    </header>
+
+    <div class="drawer__body">
+      <section class="set">
+        <h3>Export &amp; import</h3>
+        <p class="hint">Download the current results with their mood labels and the AI analysis, or open a file you exported earlier.</p>
+        <div class="row">
+          <button id="exportCsv" class="ghost-btn" type="button" disabled>Download CSV</button>
+          <button id="exportJson" class="ghost-btn" type="button" disabled>Download JSON</button>
+          <label class="ghost-btn file-btn">Import file…
+            <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" />
+          </label>
+        </div>
+      </section>
+
+      <section class="set">
+        <h3>Search</h3>
+        <div class="row">
+          <label class="field">Time range
+            <select id="timeRange">
+              <option value="day">Past day</option>
+              <option value="week">Past week</option>
+              <option value="month">Past month</option>
+              <option value="year">Past year</option>
+              <option value="all">Any time</option>
+            </select>
+          </label>
+          <label class="field">Results per source
+            <input id="perSource" type="number" min="5" max="50" step="5" />
+          </label>
+        </div>
+      </section>
+
+      <section class="set">
+        <h3>Quick searches</h3>
+        <p class="hint">Buttons under the search bar. A button can also pull in a bundle of news feeds.</p>
+        <ul id="quickEditList" class="edit-list"></ul>
+        <form id="quickAddForm" class="row">
+          <input id="qaLabel" placeholder="Label" required maxlength="24" />
+          <input id="qaQuery" placeholder="Keywords, comma-separated" />
+          <select id="qaFeeds" aria-label="Feed bundle"></select>
+          <button class="ghost-btn" type="submit">Add</button>
+        </form>
+        <button id="resetQuick" class="link-btn" type="button">Restore default buttons</button>
+      </section>
+
+      <section class="set">
+        <h3>Sources</h3>
+        <p class="hint">Free sources from <a href="https://github.com/public-apis/public-apis#news" target="_blank" rel="noopener">public-apis</a>.
+          Paste a free key to switch a news API on. Keys stay in this browser and go only to your EchoFlow server.</p>
+        <div id="sourceList" class="source-list"><p class="hint">Loading…</p></div>
+      </section>
+
+      <section class="set">
+        <h3>AI</h3>
+        <p id="aiInfo" class="hint">Checking…</p>
+      </section>
     </div>
-  </div>
+  </aside>
 
-  <footer style="text-align: center; padding: 28px 20px; color: var(--muted); border-top: 1px solid var(--line); margin-top: 32px;">
-    <p>&copy; 2025 EchoFlow. Made with ❤️ for data analysis.</p>
-    <p style="font-size: 12px; margin-top: 8px;">
-      <a href="./news.html" style="color: var(--accent); text-decoration: none;">News</a> •
-      <a href="./reddit.html" style="color: var(--accent); text-decoration: none;">Search</a> •
-      <a href="./analytics.html" style="color: var(--accent); text-decoration: none;">Analytics</a>
-    </p>
-  </footer>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="/app.js"></script>
 </body>
 </html>

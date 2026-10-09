@@ -33,7 +33,7 @@ export function postsToCsv(posts: any[]): string {
 
     return [
       escapeCsv(post.id || ''),
-      'reddit',
+      escapeCsv(post.platform || ''),
       escapeCsv(subreddit),
       escapeCsv(post.title || ''),
       escapeCsv(author),

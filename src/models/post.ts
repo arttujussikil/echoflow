@@ -9,7 +9,8 @@ export interface Comment {
 
 export interface Post {
   id: string;
-  platform: 'reddit' | 'hackernews' | 'rss' | 'twitter' | 'forum';
+  /** Collector platformId, e.g. 'reddit', 'hackernews', 'guardian' */
+  platform: string;
   title: string;
   content: string;
   author: string;
