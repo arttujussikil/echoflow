@@ -6,9 +6,9 @@
  *   - the keyword method (public/sentiment-keywords.js) as a non-AI baseline
  *   - optionally the old "array" prompt, to show why the app uses numbered keys
  *
- * Usage (needs NVIDIA_API_KEY in .env):
+ * Usage (needs NVIDIA_API_KEY and/or GEMINI_API_KEY in .env):
  *   npm run eval
- *   npm run eval -- --models nvidia/nemotron-3-super-120b-a12b --runs 3
+ *   npm run eval -- --models nvidia/nemotron-3-super-120b-a12b,gemini-3.8-flash --runs 3
  *   npm run eval -- --prompt both --out eval/results/2026-10-09.md
  *
  * Options:
@@ -20,7 +20,7 @@
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { buildLabelPrompt, readLabels, nvidiaJSON, SentimentLabel } from '../src/services/ai-service';
+import { buildLabelPrompt, readLabels, modelJSON, SentimentLabel } from '../src/services/ai-service';
 import { Post } from '../src/models/post';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { keywordSentiment } = require('../public/sentiment-keywords.js');
@@ -28,10 +28,12 @@ const { keywordSentiment } = require('../public/sentiment-keywords.js');
 interface Item { text: string; accept: SentimentLabel[] }
 interface RunResult { correct: number; labelled: number; ms: number; wrong: string[]; error?: string }
 
+// Gemini models are included automatically when GEMINI_API_KEY is set
 const DEFAULT_MODELS = [
   'nvidia/nemotron-3-ultra-550b-a55b',
   'nvidia/nemotron-3-super-120b-a12b',
   'nvidia/nemotron-3.5-lightning-30b-a3b',
+  ...(process.env.GEMINI_API_KEY ? ['gemini-3.8-flash', 'gemini-3.5-flash'] : []),
 ];
 
 // ── Args ───────────────────────────────────────────────────────────────────────
@@ -84,7 +86,7 @@ async function runModel(model: string, mode: 'numbered' | 'array'): Promise<RunR
   const t = Date.now();
   try {
     const prompt = mode === 'numbered' ? buildLabelPrompt(posts) : buildArrayPrompt(posts);
-    const parsed = await nvidiaJSON(model, prompt, 3000);
+    const parsed = await modelJSON(model, prompt, 3000);
     const labels = mode === 'numbered' ? readLabels(parsed, posts.length).labels : readArray(parsed);
     return { ...score(labels), ms: Date.now() - t };
   } catch (err: any) {
@@ -95,8 +97,9 @@ async function runModel(model: string, mode: 'numbered' | 'array'): Promise<RunR
 const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '—');
 
 async function main() {
-  if (!process.env.NVIDIA_API_KEY) {
-    console.error('NVIDIA_API_KEY is not set (put it in .env). Only the keyword baseline can run.');
+  const haveKey = Boolean(process.env.NVIDIA_API_KEY || process.env.GEMINI_API_KEY);
+  if (!haveKey) {
+    console.error('No NVIDIA_API_KEY or GEMINI_API_KEY in .env. Only the keyword baseline can run.');
   }
   const n = items.length;
   const modes: ('numbered' | 'array')[] = promptMode === 'both' ? ['numbered', 'array'] : [promptMode];
@@ -110,7 +113,7 @@ async function main() {
   rows.push(`| Keyword baseline (no AI) | — | ${pct(kw.correct, n)} | 100% | 0 s | 1 |`);
   details.push(`### Keyword baseline\n${kw.wrong.map(w => `- ${w}`).join('\n')}`);
 
-  if (process.env.NVIDIA_API_KEY) {
+  if (haveKey) {
     // Models run in parallel; each model's runs one after another
     const jobs = models.flatMap(model => modes.map(mode => ({ model, mode })));
     const results = await Promise.all(jobs.map(async ({ model, mode }) => {

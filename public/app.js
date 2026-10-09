@@ -98,6 +98,8 @@ let settings = loadSettings();
 let platforms = [];          // from /api/platforms
 let current = null;          // { query, results, sources, analysis, analysisError }
 let searchSeq = 0;           // guards against stale responses
+let aiStatus = null;         // from /api/analytics/status: which AI providers are configured
+let compare = null;          // side-by-side model comparison for the current results
 let topMode = 'popular';
 let feedFilter = { sent: '', source: '', sort: 'popular', shown: FEED_PAGE };
 
@@ -172,6 +174,8 @@ async function runSearch(query, bundle) {
   $('welcome').hidden = true;
   $('dashboard').hidden = false;
   $('feed').hidden = true;
+  compare = null;
+  $('compare').hidden = true;
   $('sourceBar').hidden = true;
   $('stats').innerHTML = '';
   $('topList').innerHTML = `<li class="loading"><span class="spinner"></span>Searching ${enabledSources().length} sources…</li>`;
@@ -230,6 +234,14 @@ function aiSample(posts) {
   return sample;
 }
 
+/** Only what the AI needs — keeps the request small with 200 posts. */
+function slimForAI(posts) {
+  return posts.map(p => ({
+    id: p.id, platform: p.platform, title: p.title, content: (p.content || '').slice(0, 400),
+    engagement: p.engagement, comments: (p.comments || []).slice(0, 1),
+  }));
+}
+
 /** Posts sent to the AI: a mixed sample first (that's what it summarises), then the rest. */
 function aiPosts(posts) {
   const sample = aiSample(posts);
@@ -249,11 +261,7 @@ async function runAI(seq = searchSeq) {
       body: JSON.stringify({
         keyword: current.query || undefined,
         language: settings.aiLanguage,
-        // Only what the AI needs — keeps the request small with 200 posts
-        posts: sample.map(p => ({
-          id: p.id, platform: p.platform, title: p.title, content: (p.content || '').slice(0, 400),
-          engagement: p.engagement, comments: (p.comments || []).slice(0, 1),
-        })),
+        posts: slimForAI(sample),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -404,8 +412,23 @@ function renderAI() {
     ${a.opinion ? `<div class="ai-block"><h3>AI's opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
     ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
     ${a.insights?.length ? `<div class="ai-block"><h3>Insights</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
-    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}</p>`;
+    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}</p>
+    ${compareButton()}`;
   wireLegend();
+  wireCompareButton();
+}
+
+function compareButton() {
+  const ready = aiStatus?.nvidia && aiStatus?.gemini;
+  const hint = ready ? 'Run both models on the same posts and show them side by side'
+    : 'Needs both NVIDIA_API_KEY and GEMINI_API_KEY in .env';
+  return `<button id="compareBtn" class="ghost-btn" type="button" title="${esc(hint)}" ${ready ? '' : 'disabled'}>⇄ Compare NVIDIA vs Gemini</button>
+    ${ready ? '' : `<p class="ai-foot">Add a free <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Gemini key</a> as <code>GEMINI_API_KEY</code> in .env to compare models.</p>`}`;
+}
+
+function wireCompareButton() {
+  const btn = $('compareBtn');
+  if (btn) btn.onclick = runCompare;
 }
 
 function moodBlock(s, title) {
@@ -621,18 +644,135 @@ async function loadPlatforms() {
 async function loadAIStatus() {
   try {
     const s = await fetch('/api/analytics/status').then(r => r.json());
+    aiStatus = s;
+    if (current) renderAI();
     const label = s.nvidia ? `NVIDIA · ${(s.nvidiaModel || '').split('/').pop()}`
+      : s.gemini ? `Gemini · ${s.geminiModel}`
       : s.available ? `Ollama · ${s.model}` : 'offline';
     $('aiPill').textContent = `AI: ${label}`;
-    $('aiPill').classList.toggle('is-ok', Boolean(s.nvidia || s.available));
+    $('aiPill').classList.toggle('is-ok', Boolean(s.nvidia || s.gemini || s.available));
+    const geminiNote = s.gemini ? ` Gemini (<code>${esc(s.geminiModel)}</code>) is set up as backup and for comparison.` : '';
     $('aiInfo').innerHTML = s.nvidia
-      ? `Using NVIDIA NIM (<code>${esc(s.nvidiaModel)}</code>)${s.available ? `, falling back to local Ollama (<code>${esc(s.model)}</code>)` : ''}.`
+      ? `Using NVIDIA NIM (<code>${esc(s.nvidiaModel)}</code>)${s.available ? `, falling back to local Ollama (<code>${esc(s.model)}</code>)` : ''}.${geminiNote}`
+      : s.gemini ? `Using Google Gemini (<code>${esc(s.geminiModel)}</code>).`
       : s.available
         ? `Using local Ollama (<code>${esc(s.model)}</code>). Set <code>NVIDIA_API_KEY</code> on the server for faster, better analysis.`
         : `No AI provider reachable. Set <code>NVIDIA_API_KEY</code> (free at build.nvidia.com) or start Ollama. Search still works; mood is then estimated from keywords.`;
   } catch {
     $('aiPill').textContent = 'AI: offline';
   }
+}
+
+// ── Side-by-side model comparison ──────────────────────────────────────────────
+const COMPARE_PROVIDERS = [
+  { id: 'nvidia', name: 'NVIDIA NIM' },
+  { id: 'gemini', name: 'Google Gemini' },
+];
+const SENT_NAME = { pos: 'positive', neu: 'neutral', neg: 'negative' };
+
+/** Runs each provider on exactly the same posts and prompts, with no fallback between them. */
+async function runCompare() {
+  if (!current?.results.length) return;
+  const seq = searchSeq;
+  const posts = aiPosts(current.results);
+  compare = { seq, posts, results: {} };
+  for (const p of COMPARE_PROVIDERS) compare.results[p.id] = { state: 'loading' };
+  $('compare').hidden = false;
+  renderCompare();
+  $('compare').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const body = { keyword: current.query || undefined, language: settings.aiLanguage, posts: slimForAI(posts) };
+  await Promise.all(COMPARE_PROVIDERS.map(async p => {
+    const started = Date.now();
+    let result;
+    try {
+      const res = await fetch('/api/analytics/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, provider: p.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `failed (${res.status})`);
+      result = { state: 'done', data, ms: Date.now() - started };
+    } catch (err) {
+      result = { state: 'error', error: err.message };
+    }
+    // Ignore answers that arrive after a new search
+    if (compare?.seq !== seq || searchSeq !== seq) return;
+    compare.results[p.id] = result;
+    renderCompare();
+  }));
+}
+
+function renderCompare() {
+  if (!compare) return;
+  const cols = COMPARE_PROVIDERS.map(p => compareColumn(p, compare.results[p.id])).join('');
+  $('compareBody').innerHTML = `<div class="compare__cols">${cols}</div>${compareAgreement()}`;
+}
+
+function compareColumn(p, r = { state: 'loading' }) {
+  if (r.state === 'loading') {
+    return `<div class="cmp-col"><h3>${p.name}</h3><div class="loading"><span class="spinner"></span>Analysing ${compare.posts.length} posts…</div></div>`;
+  }
+  if (r.state === 'error') {
+    return `<div class="cmp-col"><h3>${p.name}</h3><p class="ai-error">${esc(r.error)}</p></div>`;
+  }
+  const a = r.data;
+  const s = a.sentiment;
+  const model = (a.provider || '').replace(/^[a-z]+:/, '').split('/').pop();
+  return `
+    <div class="cmp-col">
+      <h3>${p.name} <span class="mood mood--${a.mood}">${esc(a.mood)}</span></h3>
+      <p class="ai-foot">${esc(model)} · ${((a.durationMs ?? r.ms) / 1000).toFixed(1)} s · labelled ${a.labelledCount} of ${compare.posts.length}</p>
+      <div class="moodbar" role="img" aria-label="Positive ${s.positive}%, neutral ${s.neutral}%, negative ${s.negative}%">
+        <span class="pos" style="width:${s.positive}%"></span><span class="neu" style="width:${s.neutral}%"></span><span class="neg" style="width:${s.negative}%"></span>
+      </div>
+      <p class="cmp-pcts"><span class="dot dot--positive"></span>${s.positive}% <span class="dot dot--neutral"></span>${s.neutral}% <span class="dot dot--negative"></span>${s.negative}%</p>
+      ${a.summary ? `<div class="ai-block"><h3>Summary</h3><p>${esc(a.summary)}</p></div>` : ''}
+      ${a.opinion ? `<div class="ai-block"><h3>Opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
+      ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
+    </div>`;
+}
+
+function compareAgreement() {
+  const [A, B] = COMPARE_PROVIDERS.map(p => compare.results[p.id]);
+  if (A?.state !== 'done' || B?.state !== 'done') return '';
+  const la = A.data.articleLabels || [], lb = B.data.articleLabels || [];
+  const ra = A.data.articleReasons || [], rb = B.data.articleReasons || [];
+  let both = 0, same = 0, opposite = 0;
+  const diffs = [];
+  compare.posts.forEach((post, i) => {
+    if (!la[i] || !lb[i]) return;
+    both++;
+    if (la[i] === lb[i]) { same++; return; }
+    const isOpposite = (la[i] === 'pos' && lb[i] === 'neg') || (la[i] === 'neg' && lb[i] === 'pos');
+    if (isOpposite) opposite++;
+    diffs.push({ post, a: la[i], b: lb[i], ra: ra[i], rb: rb[i], isOpposite });
+  });
+  diffs.sort((x, y) => Number(y.isOpposite) - Number(x.isOpposite));
+  const pct = both ? Math.round((100 * same) / both) : 0;
+  const cell = (l, r) => `<span class="dot dot--${SENT_NAME[l]}"></span>${SENT_NAME[l]}${r ? `<span class="item__reason"> — ${esc(r)}</span>` : ''}`;
+
+  return `
+    <div class="agree">
+      <div class="agree__score"><b>${pct}%</b> agreement</div>
+      <p class="hint">Both models labelled ${both} posts and gave the same mood to ${same}.
+        ${diffs.length} differ${opposite ? `, ${opposite} of them in opposite directions (one says positive, the other negative)` : ''}.
+        Differences are where the mood is genuinely debatable, or where one model misread the post.</p>
+    </div>
+    ${diffs.length ? `
+    <div class="diff-wrap">
+      <table class="diff">
+        <thead><tr><th>Post</th><th>${COMPARE_PROVIDERS[0].name}</th><th>${COMPARE_PROVIDERS[1].name}</th></tr></thead>
+        <tbody>${diffs.map(d => `
+          <tr class="${d.isOpposite ? 'is-opposite' : ''}">
+            <td><a href="${safeUrl(d.post.url)}" target="_blank" rel="noopener">${esc(d.post.title)}</a></td>
+            <td>${cell(d.a, d.ra)}</td>
+            <td>${cell(d.b, d.rb)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}`;
 }
 
 // ── Export / import ────────────────────────────────────────────────────────────
@@ -695,6 +835,10 @@ function exportJson() {
   download(exportName('json'), JSON.stringify({
     echoflow: 1, query: current.query, bundle: current.bundle, exportedAt: new Date().toISOString(),
     sources: current.sources, analysis: current.analysis, results,
+    comparison: compare && {
+      posts: compare.posts.map(p => ({ title: p.title, url: p.url, platform: p.platform })),
+      results: compare.results,
+    },
   }, null, 2), 'application/json');
 }
 
@@ -715,7 +859,7 @@ async function importFile(file) {
     const data = JSON.parse(text);
     if (!Array.isArray(data.results)) throw new Error('Not an EchoFlow export (no "results" array)');
     posts = data.results.map(p => ({ ...p, _sent: p.sentiment, _ai: p.labelledBy === 'ai', _reason: p.moodReason }));
-    extra = { query: data.query, bundle: data.bundle, sources: data.sources, analysis: data.analysis };
+    extra = { query: data.query, bundle: data.bundle, sources: data.sources, analysis: data.analysis, comparison: data.comparison };
   }
   if (!posts.length) throw new Error('The file has no rows');
 
@@ -727,7 +871,10 @@ async function importFile(file) {
   $('searchInput').value = current.query;
   resetFeedFilter();
   $('aiBody').innerHTML = '';
+  compare = extra.comparison?.results ? { ...extra.comparison, seq: searchSeq } : null;
+  $('compare').hidden = !compare;
   renderAll();
+  if (compare) renderCompare();
   openSettings(false);
   toast(`Imported ${posts.length} results from ${file.name}`);
 }
@@ -791,6 +938,7 @@ $('sortSelect').addEventListener('change', () => { feedFilter.sort = $('sortSele
 $('moreBtn').addEventListener('click', () => { feedFilter.shown += FEED_PAGE; renderFeed(); });
 
 $('settingsBtn').addEventListener('click', () => openSettings(true));
+$('closeCompare').addEventListener('click', () => { $('compare').hidden = true; });
 $('closeSettings').addEventListener('click', () => openSettings(false));
 $('scrim').addEventListener('click', () => openSettings(false));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') openSettings(false); });

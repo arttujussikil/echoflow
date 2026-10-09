@@ -34,6 +34,7 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 - **Top 10 + AI side by side** — most popular / latest posts on the left; AI summary, the AI's own opinion, themes and a colour-coded mood bar on the right
 - **Colour-coded results** — the AI labels every post green (positive), grey (neutral) or red (negative) and says why in a few words; click a mood to filter
 - **Measured, not guessed** — `npm run eval` scores models on 50 hand-labelled posts; the chosen model gets 98% vs 64% for a keyword list ([details](docs/ai-design.md))
+- **Model comparison** — run NVIDIA and Google Gemini on the same posts and see both analyses side by side, their agreement score and every post they disagree on
 - **English or Finnish** — the AI can write its summary, opinion and reasons in Finnish (Settings)
 - **Quick-search buttons** — News, Finland, Football, Tech… Add your own, and optionally attach a curated RSS feed bundle (World, Finland, Tech, Gaming, Esports)
 - **Free sources only** — 6 sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings)
@@ -198,12 +199,14 @@ npm start      # run compiled output
 | `DB_NAME` | `echoflow` | Postgres database name |
 | `NVIDIA_API_KEY` | — | Free NVIDIA NIM API key — get one at [build.nvidia.com](https://build.nvidia.com). When set, used as **primary** AI provider. |
 | `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b` | NVIDIA NIM model IDs, comma-separated, tried in order |
+| `GEMINI_API_KEY` | — | Free [Google AI Studio](https://aistudio.google.com/apikey) key. Adds Gemini as a backup provider and enables the side-by-side model comparison |
+| `GEMINI_MODEL` | `gemini-3.8-flash,gemini-3.5-flash` | Gemini model IDs, comma-separated, tried in order |
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (used when no NVIDIA key) |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Optional Reddit OAuth app. Without it, Reddit search falls back to RSS (no scores) |
 | `GUARDIAN_API_KEY`, `NYT_API_KEY`, `GNEWS_API_KEY`, `NEWSDATA_API_KEY`, `CURRENTS_API_KEY`, `THENEWSAPI_KEY`, `NEWSAPI_KEY`, `MEDIASTACK_API_KEY` | — | Optional free news API keys, see [Supported Sources](#supported-sources). Each source turns on when its key is set |
 
-**AI provider priority:** NVIDIA NIM → Ollama. If NVIDIA fails or no key is set, Ollama is used automatically. Both are free.
+**AI provider priority:** NVIDIA NIM → Google Gemini → Ollama. Each is skipped if not configured; all are free. The **⇄ Compare NVIDIA vs Gemini** button in the AI card runs both providers on the same posts with no fallback between them.
 
 **Recommended NVIDIA NIM models** (free tier, set via `NVIDIA_MODEL`):
 
@@ -299,7 +302,11 @@ Latest results ([full report](eval/results/2026-10-09.md)):
 | Nemotron 3 Super (default) | **98%** |
 | Nemotron 3 Ultra (backup) | 97% |
 | Nemotron 3.5 Lightning | 87% |
-| Same models with the old "ordered list" prompt | 35–62% |
+| Gemini 3.5 Flash (free tier) | 98% |
+| Gemini 3.8 Flash (free tier) | 100% in 1 run; endpoint busy in 2 of 3 runs |
+| NVIDIA models with the old "ordered list" prompt | 35–62% |
+
+Gemini rows: [Gemini report](eval/results/2026-10-09-gemini.md).
 
 Method, prompt design and limitations: [docs/ai-design.md](docs/ai-design.md).
 
@@ -395,7 +402,8 @@ Runs AI analysis on up to 200 posts. Two requests run in parallel: a summary/opi
 
 ```jsonc
 // Request
-{ "posts": [...], "keyword": "Counter-Strike", "language": "en" }   // language: "en" | "fi"
+{ "posts": [...], "keyword": "Counter-Strike", "language": "en", "provider": "gemini" }
+// language: "en" | "fi"; provider (optional): "nvidia" | "gemini" — use only that provider, no fallback
 
 // Response
 {
