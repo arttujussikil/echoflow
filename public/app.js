@@ -163,6 +163,12 @@ async function runSearch(query, bundle) {
     return;
   }
 
+  if (platforms.length && !enabledSources().length && !feeds.length) {
+    toast('No sources selected — pick at least one in the filters');
+    openFilters(true);
+    return;
+  }
+
   const seq = ++searchSeq;
   const url = new URL(location.href);
   url.search = '';
@@ -582,51 +588,156 @@ function openSettings(open) {
   if (open) $('closeSettings').focus();
 }
 
+// ── Search filters (sliders button next to the search bar) ─────────────────────
+const TIME_OPTIONS = [['day', 'Past day'], ['week', 'Past week'], ['month', 'Past month'], ['year', 'Past year'], ['all', 'Any time']];
+const PER_SOURCE_OPTIONS = [5, 10, 15, 25, 50];
+let filtersChanged = false;   // re-run the current search when the panel closes
+
+function searchablePlatforms() {
+  return platforms.filter(p => p.category !== 'feed' && p.capabilities.search);
+}
+
+/** A source needing an API key is usable once the server or this browser has one. */
+function hasKey(p) {
+  return !p.apiKey || p.apiKey.configured || Boolean(settings.apiKeys[p.id]);
+}
+
+function openFilters(open) {
+  const panel = $('filterPanel');
+  const wasOpen = !panel.hidden;
+  panel.hidden = !open;
+  $('filterBtn').setAttribute('aria-expanded', String(open));
+  $('filterBtn').classList.toggle('is-on', open);
+  if (open && !wasOpen) { filtersChanged = false; renderFilters(); }
+  if (!open && wasOpen && filtersChanged && current) {
+    // Apply the new filters to what is on screen
+    filtersChanged = false;
+    runSearch($('searchInput').value.trim(), current.bundle).then(renderQuickBar);
+  }
+}
+
+function renderFilters() {
+  const seg = (options, value, attr) => options.map(([v, label]) =>
+    `<button type="button" class="seg__btn${String(v) === String(value) ? ' is-on' : ''}" role="radio" aria-checked="${String(v) === String(value)}" data-${attr}="${v}">${label}</button>`).join('');
+  $('fTime').innerHTML = seg(TIME_OPTIONS, settings.timeRange, 'time');
+  $('fPerSource').innerHTML = seg(PER_SOURCE_OPTIONS.map(n => [n, String(n)]), settings.perSource, 'per');
+
+  const list = searchablePlatforms();
+  if (!list.length) {
+    $('fSources').innerHTML = `<p class="ai-error">Could not load sources — is the server running?</p>`;
+    $('fCount').textContent = '';
+    return;
+  }
+  const groups = [['social', 'Social & discussion'], ['news', 'News']];
+  $('fSources').innerHTML = groups.map(([cat, title]) => {
+    const chips = list.filter(p => p.category === cat).map(p => {
+      if (!hasKey(p)) {
+        return `<button type="button" class="src-chip is-locked" data-locked="${p.id}" title="${esc(p.displayName)} needs a free API key. Click to add it in Settings.">
+          <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 1 1 6 0v3H9z"/></svg>${esc(p.displayName)}</button>`;
+      }
+      const on = !settings.disabledSources.includes(p.id);
+      return `<button type="button" class="src-chip${on ? ' is-on' : ''}" aria-pressed="${on}" data-src="${p.id}" title="${esc(p.description || p.displayName)}">${esc(p.displayName)}</button>`;
+    }).join('');
+    return `<div class="src-group"><span class="src-group__title">${title}</span><div class="src-group__chips">${chips}</div></div>`;
+  }).join('');
+
+  const usable = list.filter(hasKey);
+  const on = enabledSources().length;
+  $('fCount').textContent = `${on} of ${usable.length} sources on`;
+}
+
+function filterChange(fn) {
+  fn();
+  saveSettings();
+  filtersChanged = true;
+  renderFilters();
+  updateFilterBadge();
+}
+
+/** Number on the filter button = how many filters differ from the defaults. */
+function updateFilterBadge() {
+  const usable = searchablePlatforms().filter(hasKey).map(p => p.id);
+  const n = Number(settings.timeRange !== DEFAULT_SETTINGS.timeRange)
+    + Number(settings.perSource !== DEFAULT_SETTINGS.perSource)
+    + Number(usable.some(id => settings.disabledSources.includes(id)));
+  $('filterBadge').hidden = !n;
+  $('filterBadge').textContent = n;
+}
+
+function wireFilters() {
+  $('filterBtn').addEventListener('click', () => openFilters($('filterPanel').hidden));
+  $('fApply').addEventListener('click', () => openFilters(false));
+  $('filterPanel').addEventListener('click', e => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.time) filterChange(() => { settings.timeRange = t.dataset.time; });
+    else if (t.dataset.per) filterChange(() => { settings.perSource = Number(t.dataset.per); });
+    else if (t.dataset.src) filterChange(() => {
+      const id = t.dataset.src;
+      settings.disabledSources = settings.disabledSources.includes(id)
+        ? settings.disabledSources.filter(x => x !== id)
+        : [...settings.disabledSources, id];
+    });
+    else if (t.dataset.locked) {
+      openFilters(false);
+      openSettings(true);
+      $('keysSection').scrollIntoView({ block: 'start' });
+      $('sourceList').querySelector(`[data-key="${t.dataset.locked}"]`)?.focus();
+    }
+    else if (t.id === 'fAll') filterChange(() => { settings.disabledSources = []; });
+    else if (t.id === 'fNone') filterChange(() => { settings.disabledSources = searchablePlatforms().map(p => p.id); });
+    else if (t.id === 'fReset') filterChange(() => {
+      settings.timeRange = DEFAULT_SETTINGS.timeRange;
+      settings.perSource = DEFAULT_SETTINGS.perSource;
+      settings.disabledSources = [];
+    });
+  });
+  // Close when clicking outside the search area. composedPath() is used because a
+  // chip click re-renders the panel, so e.target is already detached here.
+  const wrap = document.querySelector('.search-wrap');
+  document.addEventListener('click', e => {
+    if (!$('filterPanel').hidden && !e.composedPath().includes(wrap)) openFilters(false);
+  });
+}
+
+// ── API keys (settings drawer) ─────────────────────────────────────────────────
 function renderSourceSettings() {
   if (!platforms.length) {
     $('sourceList').innerHTML = `<p class="ai-error">Could not load sources — is the server running?</p>`;
     return;
   }
-  const groups = [['social', 'Social & discussion'], ['news', 'News']];
-  $('sourceList').innerHTML = groups.map(([cat, title]) => {
-    const rows = platforms.filter(p => p.category === cat && p.capabilities.search);
-    return `<div class="source-group">${title}</div>` + rows.map(p => {
-      const k = p.apiKey;
-      const hasKey = k && (k.configured || settings.apiKeys[p.id]);
-      const badge = !k ? '<span class="badge badge--ok">free</span>'
-        : k.configured ? '<span class="badge badge--ok">key on server</span>'
-        : settings.apiKeys[p.id] ? '<span class="badge badge--ok">key saved</span>'
-        : '<span class="badge">needs free key</span>';
-      return `
-        <div class="source-row">
-          <input type="checkbox" id="src-${p.id}" data-src="${p.id}" ${settings.disabledSources.includes(p.id) ? '' : 'checked'} />
-          <label for="src-${p.id}"><strong>${esc(p.displayName)}</strong>${badge}
-            ${p.description ? `<p class="hint">${esc(p.description)}</p>` : ''}</label>
-          ${k && !k.configured ? `
-            <div class="source-key">
-              <input type="password" data-key="${p.id}" placeholder="${hasKey ? '•••••• saved' : 'Paste API key'}" autocomplete="off" aria-label="${esc(p.displayName)} API key" />
-              <a class="ghost-btn" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
-            </div>` : ''}
-        </div>`;
-    }).join('');
+  const keyed = searchablePlatforms().filter(p => p.apiKey);
+  $('sourceList').innerHTML = keyed.map(p => {
+    const k = p.apiKey;
+    const saved = Boolean(settings.apiKeys[p.id]);
+    const badge = k.configured ? '<span class="badge badge--ok">key on server</span>'
+      : saved ? '<span class="badge badge--ok">key saved</span>'
+      : '<span class="badge">needs free key</span>';
+    return `
+      <div class="source-row source-row--key">
+        <div><strong>${esc(p.displayName)}</strong>${badge}
+          ${p.description ? `<p class="hint">${esc(p.description)}</p>` : ''}</div>
+        ${k.configured ? '' : `
+          <div class="source-key">
+            <input type="password" data-key="${p.id}" placeholder="${saved ? '•••••• saved (paste to replace, clear to remove)' : 'Paste API key'}" autocomplete="off" aria-label="${esc(p.displayName)} API key" />
+            <a class="ghost-btn" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
+          </div>`}
+      </div>`;
   }).join('');
 
-  $('sourceList').querySelectorAll('[data-src]').forEach(cb => {
-    cb.onchange = () => {
-      const id = cb.dataset.src;
-      settings.disabledSources = settings.disabledSources.filter(x => x !== id);
-      if (!cb.checked) settings.disabledSources.push(id);
-      saveSettings();
-    };
-  });
   $('sourceList').querySelectorAll('[data-key]').forEach(input => {
     input.onchange = () => {
       const id = input.dataset.key;
       const v = input.value.trim();
-      if (v) settings.apiKeys[id] = v; else delete settings.apiKeys[id];
+      if (v) {
+        settings.apiKeys[id] = v;
+        // A newly unlocked source should be on
+        settings.disabledSources = settings.disabledSources.filter(x => x !== id);
+      } else delete settings.apiKeys[id];
       saveSettings();
       renderSourceSettings();
-      toast(v ? `${platformName(id)} key saved` : `${platformName(id)} key removed`);
+      updateFilterBadge();
+      toast(v ? `${platformName(id)} key saved — the source is now available in the search filters` : `${platformName(id)} key removed`);
     };
   });
 }
@@ -639,6 +750,7 @@ async function loadPlatforms() {
     platforms = [];
   }
   renderSourceSettings();
+  updateFilterBadge();
 }
 
 async function loadAIStatus() {
@@ -917,6 +1029,8 @@ function toast(msg) {
 // ── Wiring ─────────────────────────────────────────────────────────────────────
 $('searchForm').addEventListener('submit', e => {
   e.preventDefault();
+  filtersChanged = false;
+  openFilters(false);
   runSearch($('searchInput').value.trim()).then(renderQuickBar);
 });
 
@@ -941,7 +1055,9 @@ $('settingsBtn').addEventListener('click', () => openSettings(true));
 $('closeCompare').addEventListener('click', () => { $('compare').hidden = true; });
 $('closeSettings').addEventListener('click', () => openSettings(false));
 $('scrim').addEventListener('click', () => openSettings(false));
-document.addEventListener('keydown', e => { if (e.key === 'Escape') openSettings(false); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { openSettings(false); openFilters(false); }
+});
 
 $('aiLanguage').value = settings.aiLanguage || 'en';
 $('aiLanguage').addEventListener('change', () => {
@@ -951,14 +1067,7 @@ $('aiLanguage').addEventListener('change', () => {
   if (current?.results.length) { openSettings(false); runAI(); }
 });
 
-$('timeRange').value = settings.timeRange;
-$('timeRange').addEventListener('change', () => { settings.timeRange = $('timeRange').value; saveSettings(); });
-$('perSource').value = settings.perSource;
-$('perSource').addEventListener('change', () => {
-  settings.perSource = Math.min(50, Math.max(5, Number($('perSource').value) || 15));
-  $('perSource').value = settings.perSource;
-  saveSettings();
-});
+wireFilters();
 
 $('quickAddForm').addEventListener('submit', e => {
   e.preventDefault();

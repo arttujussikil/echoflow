@@ -1,4 +1,5 @@
 import { Post } from '../models/post';
+import { envSecret } from '../utils/env';
 
 export interface CollectorConfig {
   maxResults?: number;
@@ -78,12 +79,12 @@ export abstract class BaseCollector {
   /** Key from the request if given, otherwise from the environment. */
   protected resolveApiKey(options?: SearchOptions): string {
     if (options?.apiKey) return options.apiKey;
-    return this.apiKeyInfo ? process.env[this.apiKeyInfo.envVar] || '' : '';
+    return this.apiKeyInfo ? envSecret(this.apiKeyInfo.envVar) : '';
   }
 
   /** True when the source can run without a per-request key. */
   isReady(): boolean {
-    return !this.apiKeyInfo || Boolean(process.env[this.apiKeyInfo.envVar]);
+    return !this.apiKeyInfo || Boolean(envSecret(this.apiKeyInfo.envVar));
   }
 
   getPlatformInfo(): PlatformInfo {

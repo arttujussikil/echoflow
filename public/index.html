@@ -18,14 +18,48 @@
   </header>
 
   <main class="page">
-    <!-- Search -->
-    <form id="searchForm" class="search" role="search">
-      <svg class="search__icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
-      <input id="searchInput" class="search__input" type="search" autocomplete="off"
-        placeholder="Search everything — separate topics with commas, e.g. News, Finland"
-        aria-label="Search keywords" />
-      <button id="searchBtn" class="search__btn" type="submit">Search</button>
-    </form>
+    <!-- Search + filters -->
+    <div class="search-wrap">
+      <form id="searchForm" class="search" role="search">
+        <svg class="search__icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
+        <input id="searchInput" class="search__input" type="search" autocomplete="off"
+          placeholder="Search everything — separate topics with commas, e.g. News, Finland"
+          aria-label="Search keywords" />
+        <button id="searchBtn" class="search__btn" type="submit">Search</button>
+        <button id="filterBtn" class="search__filter" type="button" aria-label="Search filters" title="Search filters: time range, results, sources"
+          aria-controls="filterPanel" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <span id="filterBadge" class="search__badge" hidden></span>
+        </button>
+      </form>
+
+      <!-- Filter panel (time range, results per source, sources) -->
+      <section id="filterPanel" class="filters" aria-label="Search filters" hidden>
+        <div class="filters__row">
+          <span class="filters__label">Time range</span>
+          <div id="fTime" class="seg seg--wrap" role="radiogroup" aria-label="Time range"></div>
+        </div>
+        <div class="filters__row">
+          <span class="filters__label">Results per source</span>
+          <div id="fPerSource" class="seg seg--wrap" role="radiogroup" aria-label="Results per source"></div>
+        </div>
+        <div class="filters__row filters__row--top">
+          <span class="filters__label">Sources</span>
+          <div class="filters__sources">
+            <div class="filters__actions">
+              <button id="fAll" class="link-btn" type="button">Select all</button>
+              <button id="fNone" class="link-btn" type="button">Clear</button>
+              <span id="fCount" class="muted"></span>
+            </div>
+            <div id="fSources"></div>
+          </div>
+        </div>
+        <footer class="filters__foot">
+          <button id="fReset" class="link-btn" type="button">Reset to defaults</button>
+          <button id="fApply" class="search__btn" type="button">Done</button>
+        </footer>
+      </section>
+    </div>
 
     <!-- Quick searches -->
     <nav id="quickBar" class="quick" aria-label="Quick searches"></nav>
@@ -36,8 +70,9 @@
     <!-- Empty state -->
     <section id="welcome" class="welcome">
       <h1>What is the internet saying?</h1>
-      <p>One search runs across Reddit, Hacker News, Bluesky, Lemmy, Google News and the free news APIs you enable in Settings.
-        Then the AI sums it up, gives its own take and colours everything by mood.</p>
+      <p>One search runs across Reddit, Hacker News, Bluesky, Lemmy, Google News and free news APIs.
+        Then the AI sums it up, gives its own take and colours everything by mood.
+        Use the <span class="nowrap">filter button</span> next to the search bar to pick the time range and sources.</p>
     </section>
 
     <!-- Results: summary + AI side by side -->
@@ -118,21 +153,15 @@
       </section>
 
       <section class="set">
-        <h3>Search</h3>
-        <div class="row">
-          <label class="field">Time range
-            <select id="timeRange">
-              <option value="day">Past day</option>
-              <option value="week">Past week</option>
-              <option value="month">Past month</option>
-              <option value="year">Past year</option>
-              <option value="all">Any time</option>
-            </select>
-          </label>
-          <label class="field">Results per source
-            <input id="perSource" type="number" min="5" max="50" step="5" />
-          </label>
-        </div>
+        <h3>AI</h3>
+        <p id="aiInfo" class="hint">Checking…</p>
+        <label class="field">AI writes in
+          <select id="aiLanguage">
+            <option value="en">English</option>
+            <option value="fi">Suomi (Finnish)</option>
+          </select>
+        </label>
+        <p class="hint">Summary, opinion, themes and the reason behind each post's mood.</p>
       </section>
 
       <section class="set">
@@ -148,24 +177,13 @@
         <button id="resetQuick" class="link-btn" type="button">Restore default buttons</button>
       </section>
 
-      <section class="set">
-        <h3>Sources</h3>
-        <p class="hint">Free sources from <a href="https://github.com/public-apis/public-apis#news" target="_blank" rel="noopener">public-apis</a>.
-          Paste a free key to switch a news API on. Keys stay in this browser and go only to your EchoFlow server.</p>
+      <section class="set" id="keysSection">
+        <h3>API keys</h3>
+        <p class="hint">These news APIs from <a href="https://github.com/public-apis/public-apis#news" target="_blank" rel="noopener">public-apis</a> need a free key.
+          Paste one to unlock the source in the search filters. Keys stay in this browser and go only to your EchoFlow server.</p>
         <div id="sourceList" class="source-list"><p class="hint">Loading…</p></div>
       </section>
 
-      <section class="set">
-        <h3>AI</h3>
-        <p id="aiInfo" class="hint">Checking…</p>
-        <label class="field">AI writes in
-          <select id="aiLanguage">
-            <option value="en">English</option>
-            <option value="fi">Suomi (Finnish)</option>
-          </select>
-        </label>
-        <p class="hint">Summary, opinion, themes and the reason behind each post's mood.</p>
-      </section>
     </div>
   </aside>
 

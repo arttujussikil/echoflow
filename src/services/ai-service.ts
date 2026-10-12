@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Post } from '../models/post';
 import { logger } from '../utils/logger';
+import { envSecret } from '../utils/env';
 
 export type SentimentLabel = 'pos' | 'neu' | 'neg';
 
@@ -38,7 +39,7 @@ const LANGUAGE_RULE: Record<AILanguage, string> = {
 const OLLAMA_HOST  = process.env.OLLAMA_HOST  || 'http://ollama:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
 
-const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';
+const NVIDIA_API_KEY = envSecret('NVIDIA_API_KEY');
 /**
  * Comma-separated, tried in order. Picked with eval/sentiment-benchmark.ts
  * (see docs/ai-design.md): with the labelling prompt below, nemotron-3-super got
@@ -49,7 +50,7 @@ const NVIDIA_MODELS = csv(process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-1
 const NVIDIA_BASE = 'https://integrate.api.nvidia.com/v1';
 
 /** Google AI Studio key (free tier: https://aistudio.google.com/apikey) */
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_API_KEY = envSecret('GEMINI_API_KEY');
 const GEMINI_MODELS = csv(process.env.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.5-flash');
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
 

@@ -3,6 +3,7 @@ import { BaseCollector, CollectorConfig, CollectorCapabilities, SearchOptions, C
 import { Post, Comment } from '../models/post';
 import { logger } from '../utils/logger';
 import { handleAPIError } from '../utils/errors';
+import { envSecret } from '../utils/env';
 
 let ParserClass: any;
 try { ParserClass = require('rss-parser'); } catch { ParserClass = null; }
@@ -56,8 +57,8 @@ export class RedditCollector extends BaseCollector {
     requiresAuth: false,
   };
 
-  private readonly clientId     = process.env.REDDIT_CLIENT_ID     || '';
-  private readonly clientSecret = process.env.REDDIT_CLIENT_SECRET || '';
+  private readonly clientId     = envSecret('REDDIT_CLIENT_ID');
+  private readonly clientSecret = envSecret('REDDIT_CLIENT_SECRET');
   private readonly userAgent    = 'EchoFlow/1.0 by EchoFlowApp';
   private get baseUrl()         { return this.clientId ? 'https://oauth.reddit.com' : 'https://www.reddit.com'; }
 

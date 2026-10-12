@@ -37,7 +37,7 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 - **Model comparison** — run NVIDIA and Google Gemini on the same posts and see both analyses side by side, their agreement score and every post they disagree on
 - **English or Finnish** — the AI can write its summary, opinion and reasons in Finnish (Settings)
 - **Quick-search buttons** — News, Finland, Football, Tech… Add your own, and optionally attach a curated RSS feed bundle (World, Finland, Tech, Gaming, Esports)
-- **Free sources only** — 6 sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings)
+- **Free sources only** — 6 sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings → API keys)
 - **Free AI, two tiers** — set `NVIDIA_API_KEY` for high-accuracy cloud inference via [NVIDIA NIM](https://build.nvidia.com) (free endpoint); falls back to local Ollama automatically
 - **Export & import** — download results with mood labels and AI analysis as CSV or JSON from Settings, and open them again later
 - **Pluggable sources** — a new news API is one entry in `news-api-collector.ts`; a new platform is one collector class + one `register()` call
@@ -232,7 +232,7 @@ NVIDIA retires models from time to time (e.g. `mistralai/mistral-nemotron` now r
 
 ## Supported Sources
 
-Shown in **Settings → Sources**, where each one can be switched off.
+Pick which ones to search with the **filter button** next to the search bar. News APIs that need a key show a lock until a key is added in **Settings → API keys** or `.env`.
 
 ### No key needed
 
@@ -273,13 +273,14 @@ Quick-search buttons can attach a curated feed bundle (World, Finland, Tech, Gam
 A single page at `http://localhost:3000`:
 
 1. **Search bar.** Comma-separated topics (`News, Finland`) are each searched across every enabled source.
+   The **filter button** (sliders icon) next to it sets the time range, results per source and which sources to search, e.g. only the New York Times. A number on the button shows how many filters differ from the defaults; changing them re-runs the current search.
 2. **Quick-search buttons** under it. Click one to search; **+ Save search** turns the current search into a button. Manage the buttons in Settings.
 3. **Top 10** (left): most popular by engagement, or latest.
 4. **AI analysis** (right): mood bar (green / grey / red), summary, the AI's own opinion, themes and insights. Click a mood to filter the list below.
 5. **All results**, colour-coded by mood and filterable by mood and source. The AI labels every result (up to 200) and the mood bar is counted from those labels; a `*` after the mood means the AI couldn't label that post and it was estimated from keywords.
 6. **Why a colour?** Each post shows the AI's reason next to its mood (e.g. *negative — forest cleared for data centre*); hover a dot in the Top 10 to see it.
 
-**Settings (⚙, top right):** export/import CSV & JSON, time range, results per source, quick-search buttons, sources + API keys, AI provider info.
+**Settings (⚙, top right):** export/import CSV & JSON, AI language and provider info, quick-search buttons, API keys for the news APIs.
 
 Old URLs (`/ui/news`, `/ui/reddit`, `/ui/analytics.html`, …) redirect to the main page. `/?q=News,Finland` opens a search directly.
 
@@ -516,7 +517,7 @@ import { DevToCollector } from './devto-collector';
 registry.register(new DevToCollector());
 ```
 
-Done. The source appears in **Settings → Sources** and is used by every search, with no frontend changes needed. Set `category = 'news' as const` for news sources, and `apiKeyInfo` if it needs a key.
+Done. The source appears in the search filters and is used by every search, with no frontend changes needed. Set `category = 'news' as const` for news sources, and `apiKeyInfo` if it needs a key.
 
 **Adding a news API is even shorter:** append a definition to `NEWS_APIS` in `src/collectors/news-api-collector.ts` (request builder + response mapper). Key handling, errors and the Settings UI come for free.
 
@@ -596,7 +597,11 @@ Hover over it to see the error. Typical causes: an invalid or rate-limited API k
 
 **A news API says "needs free key"**
 
-Paste a key in Settings → Sources, or set its env var (see [Supported Sources](#supported-sources)) and restart the server.
+Paste a key in Settings → API keys, or set its env var (see [Supported Sources](#supported-sources)) and restart the server.
+
+**News APIs show ⚠ errors although you never added keys**
+
+You probably copied an old `.env.example` that had comments on the same line (`GUARDIAN_API_KEY=   # https://...`). Docker reads the comment as the key. Current versions ignore such values; also keep comments on their own line in `.env`.
 
 **Old pages or "Route not found" at `http://localhost:3000`**
 
