@@ -34,6 +34,10 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 - **Top 10 + AI side by side** — most popular / latest posts on the left; AI summary, the AI's own opinion, themes and a colour-coded mood bar on the right
 - **Colour-coded results** — the AI labels every post green (positive), grey (neutral) or red (negative) and says why in a few words; click a mood to filter
 - **Measured, not guessed** — `npm run eval` scores models on 50 hand-labelled posts; the chosen model gets 98% vs 64% for a keyword list ([details](docs/ai-design.md))
+- **Ask the results** — ask a question in plain language; the AI answers only from the posts found (retrieval-augmented generation) and links the posts it used
+- **Stories** — posts about the same thing (in any language) are grouped into stories by a local embedding model
+- **Mood toward…** — mood toward a specific person, company or place (e.g. Google vs EU), not just the overall tone
+- **Mood by source & over time** — the same topic on Reddit vs Yle vs Bluesky, and how its mood changes day by day (analyses are saved in PostgreSQL)
 - **Model comparison** — run NVIDIA and Google Gemini on the same posts and see both analyses side by side, their agreement score and every post they disagree on
 - **English or Finnish** — the AI can write its summary, opinion and reasons in Finnish (Settings)
 - **Quick-search buttons** — News, Finland, Football, Tech… Add your own, and optionally attach a curated RSS feed bundle (World, Finland, Tech, Gaming, Esports)
@@ -204,7 +208,10 @@ npm start      # run compiled output
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (last resort for the summary) |
 | `LOCAL_SENTIMENT_MODEL` | `onnx-community/twitter-xlm-roberta-base-sentiment-ONNX@q8` | Offline Hugging Face classifier that labels moods when the cloud AI doesn't answer. `off` disables it |
-| `LOCAL_MODEL_CACHE` | `./models-cache` (`/app/models-cache` in Docker, a volume) | Where the offline model is downloaded |
+| `LOCAL_MODEL_CACHE` | `./models-cache` (`/app/models-cache` in Docker, a volume) | Where the local models are downloaded |
+| `EMBEDDING_MODEL` | `Xenova/multilingual-e5-small@q8` | Local embedding model for Stories, Ask the results and Mood toward… (`off` disables them) |
+| `TRACK_TOPICS` | — | Topics to analyse automatically for Mood over time, comma-separated (`|` joins a multi-keyword search) |
+| `TRACK_EVERY_HOURS` | `6` | How often the tracker runs |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Optional Reddit OAuth app. Without it, Reddit search falls back to RSS (no scores) |
 | `GUARDIAN_API_KEY`, `NYT_API_KEY`, `GNEWS_API_KEY`, `NEWSDATA_API_KEY`, `CURRENTS_API_KEY`, `THENEWSAPI_KEY`, `NEWSAPI_KEY`, `MEDIASTACK_API_KEY` | — | Optional free news API keys, see [Supported Sources](#supported-sources). Each source turns on when its key is set |
 
@@ -290,6 +297,10 @@ A single page at `http://localhost:3000`:
 4. **AI analysis** (right): mood bar (green / grey / red), summary, the AI's own opinion, themes and insights. Click a mood to filter the list below.
 5. **All results**, colour-coded by mood and filterable by mood and source. The AI labels every result (up to 200) and the mood bar is counted from those labels; a `*` after the mood means the AI couldn't label that post and it was estimated from keywords.
 6. **Why a colour?** Each post shows the AI's reason next to its mood (e.g. *negative — forest cleared for data centre*); hover a dot in the Top 10 to see it.
+7. **Ask the results.** Ask a question (or click a suggestion). The 15 posts most similar in meaning are retrieved and the AI answers from them only, with [n] links to the posts.
+8. **Mood toward…** Type up to 3 names (or click a suggested one): every post that names them, plus the most similar ones, is labelled positive / neutral / negative *toward that name*.
+9. **Mood by source** (by platform or by outlet) and **Mood over time** (by publish date, or earlier saved analyses of the same search).
+10. **All results → Stories** groups posts about the same story; each story shows how many posts and sources covered it and their mood.
 
 **Settings (⚙, top right):** export/import CSV & JSON, AI language and provider info, quick-search buttons, API keys for the news APIs.
 
@@ -439,6 +450,52 @@ Returns 503 if Ollama is not yet ready (first pull can take a few minutes).
 
 ---
 
+### POST /api/analytics/ask
+
+Ask the results (RAG). Embeds the question and the posts, keeps the 15 most similar, and answers from those only.
+
+```jsonc
+// Request
+{ "question": "Why are people negative?", "posts": [{ "title": "…", "content": "…", "source": "Reddit", "mood": "negative" }], "language": "en" }
+// Response
+{ "answer": "Authorities halted the data centres over forest clearing [1][3].", "citations": { "1": 12, "3": 40 }, "retrieved": [12, 7, 40, …], "retrieval": "embeddings (multilingual-e5-small)", "provider": "nvidia:…" }
+```
+`citations` maps each [n] in the answer to an index in the `posts` you sent.
+
+---
+
+### POST /api/analytics/stories
+
+Groups posts about the same story: titles are embedded locally and clustered (average linkage, cosine ≥ 0.88).
+
+```jsonc
+{ "posts": [{ "title": "…" }] }   →   { "stories": [[0, 4, 9], [2, 7]], "threshold": 0.88, "model": "multilingual-e5-small" }
+```
+
+---
+
+### POST /api/analytics/target
+
+Mood toward up to 3 targets. For each target: posts that name it plus the most similar ones (max 60), labelled pos / neu / neg toward the target, or na.
+
+```jsonc
+{ "targets": ["Google", "EU"], "posts": [{ "title": "…", "content": "…" }] }
+→ { "results": [{ "target": "Google", "considered": 35, "directMentions": 15, "counts": { "pos": 0, "neu": 0, "neg": 15, "na": 20 },
+                  "posts": { "12": { "s": "neg", "r": "halt ordered over forest clearing" } }, "provider": "nvidia:…" }] }
+```
+
+---
+
+### GET /api/history?topic=Finland&days=90
+
+Saved mood snapshots for a search, oldest first. `POST /api/analytics/analyze` saves one when it gets `topic`. `GET /api/history/topics` lists topics with history.
+
+```jsonc
+{ "topic": "Finland", "available": true, "points": [{ "at": "2026-10-13T01:18:42Z", "n": 57, "positive": 28, "neutral": 42, "negative": 30, "origin": "search" }] }
+```
+
+---
+
 ### GET /api/analytics/status
 
 ```json
@@ -549,7 +606,8 @@ echoflow/
 │   │   └── routes/
 │   │       ├── discover.ts            # POST /api/discover — the main multi-source search
 │   │       ├── search.ts              # POST /api/search — per-platform search, comments, persistence
-│   │       ├── analytics.ts           # /api/analytics/analyze + /status — AI analysis
+│   │       ├── analytics.ts           # /api/analytics: analyze, ask, stories, target, status
+│   │       ├── history.ts             # /api/history — mood over time
 │   │       ├── recs.ts                # POST /api/recs — AI recommendation extraction
 │   │       └── reddit.ts              # POST /api/reddit/comments
 │   ├── collectors/
@@ -564,10 +622,14 @@ echoflow/
 │   │   ├── news-api-collector.ts      # public-apis news APIs (Spaceflight, Guardian, NYT, GNews, …)
 │   │   └── rss-collector.ts           # Generic RSS 2.0 / Atom feed collector
 │   ├── services/
-│   │   └── ai-service.ts              # AI integration — NVIDIA NIM (primary) + Ollama (fallback)
+│   │   ├── ai-service.ts              # LLM prompts: mood labels, summary, ask, target; NVIDIA → Gemini → Ollama
+│   │   ├── local-sentiment.ts         # Offline Hugging Face mood classifier (fallback)
+│   │   ├── embeddings.ts              # Local embedding model + clustering (stories, ask, target)
+│   │   └── tracker.ts                 # Optional background analysis of TRACK_TOPICS
 │   ├── db/
 │   │   ├── pool.ts                    # pg connection pool
 │   │   ├── repositories.ts            # upsertPost, upsertComment, createSearch, …
+│   │   ├── history.ts                 # mood_history table (created on first use)
 │   │   └── init/01_schema.sql         # Auto-runs on first boot
 │   ├── models/
 │   │   └── post.ts                    # Post + Comment interfaces

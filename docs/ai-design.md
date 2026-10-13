@@ -155,7 +155,60 @@ LLMs are not the only option. Hugging Face has small classifiers trained only fo
 - **Quantization is free here.** The 8-bit version of xlm-roberta (`@q8`, ~280 MB) scored the same as or slightly better than the full 1.1 GB model, and ran ~4× faster. The 4-bit version lost 2–8 points.
 - **We use it in the app.** xlm-roberta (q8) labels the moods when NVIDIA and Gemini don't answer, instead of the 3B Ollama model, which mislabelled or skipped most posts. It runs inside the web container and labels 40 posts in a few hundred milliseconds. It gives no reasons and can't write the summary, so the UI says when it was used.
 
-## 4. Summary, opinion and language
+## 4. Features built on top of the labels
+
+### Ask the results (retrieval-augmented generation)
+
+A question is answered in two steps:
+
+1. **Retrieve.** The question and every post are embedded with a local multilingual model (`multilingual-e5-small`, ~120 MB, runs in the web container). The 15 posts closest in meaning are kept. This works across languages: a Finnish question finds English posts and the other way round.
+2. **Generate.** The LLM gets only those 15 posts, numbered, and must answer from them, cite them as [n], and say so when they don't contain the answer.
+
+When asked *"What do people think about Finnish football?"* about a "Finland" search with no football posts, it answered *"No posts mention Finnish football"* instead of making something up.
+
+**Lesson: example values in a prompt get copied.** The first prompt showed the answer format with a realistic example, `"Most posts criticise the decision [2][5], while a few welcome it [7]."` Two things went wrong:
+- The model returned that sentence word for word as its answer to one question.
+- After we changed the example to placeholders, it still cited posts **2, 5 and 7 in every answer**, including posts that had nothing to do with the claim. In one answer about football, [2] was a book about war preparedness and [5] a photo post.
+
+The fix was to use placeholders without numbers (`[x]`) and an explicit rule: *only cite a post if it is actually about that claim*. After that, every cited post we checked supported its sentence. Format examples in prompts should never contain values the model could plausibly reuse.
+
+### Stories (embedding clustering)
+
+Post titles are embedded and grouped with **average-linkage agglomerative clustering**: the two most similar groups are merged while their average cosine similarity is above a threshold. Average linkage avoids "chaining", where A≈B and B≈C would pull an unrelated C into A's story.
+
+The threshold was tuned on a real "Finland" search (86 posts). e5 models give high similarities to most text pairs, so a low threshold merges unrelated posts:
+
+| Threshold | Result |
+|---|---|
+| 0.84 | Big story merged with unrelated posts (olive picking + banned books + Masked Singer in one group) |
+| 0.86 | Better, but "Northern Lights" grouped with "Tom of Finland" |
+| **0.88** | Data-centre story (13 posts, 4 platforms, English + Finnish) and Russian-travel story correct; one loose group |
+| 0.90 | Splits the data-centre story in two |
+
+Using the post body as well as the title made groups noisier (hashtags, boilerplate), so only titles are embedded.
+
+### Mood toward a target
+
+Overall mood isn't always what you want: *"Finland halts Google's data centres"* is bad news for Google, but not for Finland. For a target like "Google", the app finds the posts that name it (word-boundary match, so "EU" doesn't match "Europe"; stem match for inflected Finnish "Googlen") plus the most similar posts by embedding, and asks the LLM for the sentiment **toward the target**, or `na` if the post isn't about it.
+
+Evaluated on **NewsMTSC** (300 English news sentences, each labelled with the sentiment toward one named person by 5 annotators; [`eval/results/2026-10-13-newsmtsc.md`](../eval/results/2026-10-13-newsmtsc.md)):
+
+| Method | Accuracy (95% interval) |
+|---|---|
+| Keyword list | 41% |
+| xlm-roberta (local, sentence-level, ignores the target) | 55% |
+| Nemotron 3 Super, normal mood prompt | 62% (58–67%) |
+| **Nemotron 3 Super, target prompt** | **75% (70–80%)** |
+
+Telling the model *whose* sentiment to judge adds 13 points, and the intervals don't overlap. The remaining errors are mostly neutral vs positive/negative on politically loaded sentences, where the annotators themselves needed 5 votes.
+
+### Mood by source and over time
+
+Both charts reuse the per-post labels; no extra AI calls. *Mood over time* has two views: the posts of the current search bucketed by publish date (3 h / day / week / month depending on the span), and earlier analyses of the same search saved in PostgreSQL (`mood_history`). `TRACK_TOPICS` can record chosen topics automatically every few hours.
+
+The mood colours were checked with a colour-vision-deficiency validator. The original green/red pair was hard to tell apart for deuteranopes (ΔE 5.0 on the light theme, target ≥ 8). Lightening the green on the dark theme and darkening the red on the light theme raised it to 14.6 and 11.0 without changing the "green = good, red = bad" convention.
+
+## 5. Summary, opinion and language
 
 The summary request sees 25 posts. They are picked round-robin across sources, so one loud platform can't dominate, with the most engaged posts first. It returns a summary, the **AI's own opinion** (the prompt asks it to take a stance on whether the reaction seems justified), themes, insights and one overall mood word.
 
@@ -163,7 +216,7 @@ The settings drawer has **AI writes in: English / Suomi**. It adds one instructi
 
 ---
 
-## 5. Limitations
+## 6. Limitations
 
 - **Small test set.** 50 posts labelled by us is enough to compare models and prompts against each other, but too small to give a precise accuracy figure. A difference of 1–2 points (Super vs Ultra vs Gemini) is within noise, and the best models now all score 97–100%.
 - **Our labels are subjective.** Mood is often debatable ("Finland bans private schools. Finland has the world's best schools." could be read three ways). We accepted several labels where we disagreed with ourselves, which makes the task easier.
@@ -172,4 +225,6 @@ The settings drawer has **AI writes in: English / Suomi**. It adds one instructi
 - **Mood ≠ stance.** "Negative" means bad news or a critical tone, not that people are against the topic. A halt to a damaging project is labelled negative news even if many readers welcome it.
 - **Free endpoints vary.** Response times range from ~3 s to ~30 s, and models can be busy or retired. The fallback chain hides this from the user but not the delay.
 - **Hub models need checking.** A model's own reported accuracy, or a score on a public dataset, may come from overlap with its training data (see FinBERT above). Always check the model card for what it was trained on.
+- **Ask and Mood toward… only see what was retrieved.** If the relevant post isn't among the 15 (Ask) or 60 (target) retrieved ones, the answer misses it. They also only know what the search found, not the wider world.
+- **Story threshold is tuned on one search.** 0.88 worked on the "Finland" results; other topics or languages may group too much or too little.
 - **Limits per search.** Up to 200 posts are labelled; anything beyond that (rare) keeps a keyword estimate, marked with `*` in the UI.
