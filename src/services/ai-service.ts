@@ -462,6 +462,131 @@ export async function analyzeWithAI(posts: Post[], keyword?: string, language: A
   };
 }
 
+// ── Mood toward a specific target (entity / aspect sentiment) ──────────────────
+export type TargetLabel = SentimentLabel | 'na';
+
+export interface TargetItem {
+  text: string;
+  target: string;
+}
+
+/**
+ * Sentiment toward a named target in each post, not the post's overall tone:
+ * "Finland halts Google's data centres" is negative for Google but not
+ * necessarily for Finland. 'na' = the post doesn't mention or refer to the target.
+ * Each line carries its own target, so the same prompt serves the app (one target
+ * for every post) and the NewsMTSC benchmark (a different target per sentence).
+ */
+export function buildTargetPrompt(items: TargetItem[], language: AILanguage = 'en'): string {
+  const lines = items.map((it, i) => `${i + 1}. [target: ${it.target}] ${it.text.replace(/\s+/g, ' ').trim().slice(0, 400)}`);
+  return `For each numbered post, decide the sentiment expressed TOWARD ITS TARGET (shown in [target: ...]), not the general tone of the post.
+
+pos = the post presents the target favourably (praise, success, support, good news for the target)
+neg = the post presents the target unfavourably (criticism, blame, failure, accusations, bad news for the target)
+neu = the target is mentioned in a neutral or balanced way
+na = the post does not mention or clearly refer to the target
+A post can be negative in tone but positive toward the target, or the other way round.
+Posts may be in Finnish or other languages.
+
+Posts:
+${lines.join('\n')}
+
+Reply with ONLY a JSON object with one key per post number. Each value has "s" ("pos", "neu", "neg" or "na") and "r" (the reason, max 8 words; empty for na), e.g.
+{"1":{"s":"neg","r":"blamed for the delay"},"2":{"s":"na","r":""}}
+Include all ${items.length} numbers. ${LANGUAGE_RULE[language]}`;
+}
+
+export function readTargetLabels(parsed: any, count: number): { labels: (TargetLabel | null)[]; reasons: (string | null)[] } {
+  const src = parsed?.labels && typeof parsed.labels === 'object' ? parsed.labels : parsed;
+  const labels: (TargetLabel | null)[] = [];
+  const reasons: (string | null)[] = [];
+  for (let i = 0; i < count; i++) {
+    const entry = src?.[String(i + 1)];
+    const isObj = typeof entry === 'object' && entry !== null;
+    const v = String((isObj ? entry.s ?? entry.label : entry) ?? '').toLowerCase().slice(0, 3);
+    labels.push(v === 'pos' || v === 'neu' || v === 'neg' ? v : v === 'na' || v === 'n/a' ? 'na' : null);
+    const r = isObj ? entry.r ?? entry.reason : null;
+    reasons.push(typeof r === 'string' && r.trim() ? r.trim().slice(0, 120) : null);
+  }
+  return { labels, reasons };
+}
+
+/** Label items toward their targets in batches of LABEL_BATCH (cloud models, then Ollama). */
+export async function labelTowardTargets(items: TargetItem[], language: AILanguage = 'en'): Promise<{ labels: (TargetLabel | null)[]; reasons: (string | null)[]; provider?: string }> {
+  const batches: TargetItem[][] = [];
+  for (let i = 0; i < items.length; i += LABEL_BATCH) batches.push(items.slice(i, i + LABEL_BATCH));
+  const results = await Promise.allSettled(batches.map(async b => {
+    const enough = (parsed: any) => readTargetLabels(parsed, b.length).labels.filter(Boolean).length >= b.length * 0.8;
+    const { parsed, provider } = await askJSON(buildTargetPrompt(b, language), `target-label ${b.length} posts`, 3000, enough);
+    return { ...readTargetLabels(parsed, b.length), provider };
+  }));
+  const labels: (TargetLabel | null)[] = [];
+  const reasons: (string | null)[] = [];
+  let provider: string | undefined;
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') { labels.push(...r.value.labels); reasons.push(...r.value.reasons); provider ??= r.value.provider; }
+    else { logger.warn(`Target batch ${i + 1} failed: ${r.reason?.message}`); labels.push(...batches[i].map(() => null)); reasons.push(...batches[i].map(() => null)); }
+  });
+  if (!provider && items.length) throw results.find(r => r.status === 'rejected')?.reason ?? new Error('Target analysis failed');
+  return { labels, reasons, provider };
+}
+
+// ── Ask the results (retrieval-augmented generation) ───────────────────────────
+export interface AskPost {
+  title: string;
+  content?: string;
+  source?: string;
+  mood?: string;
+}
+
+export interface AskAnswer {
+  answer: string;
+  /** Post numbers (1-based, in the order given) the answer cites */
+  cited: number[];
+  provider: string;
+}
+
+/**
+ * Answer a question using only the given posts (already retrieved as the most
+ * relevant ones). The model must cite post numbers and say so when the posts
+ * don't contain the answer, so it can't fall back on its own world knowledge.
+ */
+export async function answerFromPosts(
+  question: string,
+  posts: AskPost[],
+  language: AILanguage = 'en',
+  history: { q: string; a: string }[] = []
+): Promise<AskAnswer> {
+  const lines = posts.map((p, i) => {
+    const body = (p.content ?? '').replace(/\s+/g, ' ').trim();
+    const extra = body && body !== p.title ? ` — ${body.slice(0, 300)}` : '';
+    return `[${i + 1}] (${p.source ?? 'unknown source'}${p.mood ? `, mood: ${p.mood}` : ''}) ${p.title}${extra}`;
+  });
+  const past = history.slice(-3).map(h => `Q: ${h.q}\nA: ${h.a}`).join('\n\n');
+
+  const prompt = `You answer questions about a set of social-media posts and news articles.
+Use ONLY the numbered posts below. Do not use outside knowledge. If the posts don't answer the question, say that clearly.
+After each claim, cite the posts that directly support it with their numbers in square brackets. Only cite a post if it is actually about that claim; never cite a post just because it is in the list. Keep the answer under 120 words.
+${LANGUAGE_RULE[language]}
+${past ? `\nEarlier in this conversation:\n${past}\n` : ''}
+Posts:
+${lines.join('\n')}
+
+Question: ${question}
+
+Reply with ONLY this JSON. Put the citations inside the answer text, right after the claim they support:
+{"answer": "<first point> [x][x]. <second point> [x].", "cited": [x, x, x]}
+Replace each x with the real number of the post you are citing, and the <...> parts with your own answer from the posts above.`;
+
+  const { parsed, provider } = await askJSON(prompt, 'ask', 1200, p => typeof p?.answer === 'string' && p.answer.trim().length > 0);
+  // Trust the citations in the text over the list, and drop numbers that don't exist
+  const inText = [...String(parsed.answer).matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+  const cited = [...new Set([...inText, ...(Array.isArray(parsed.cited) ? parsed.cited.map(Number) : [])])]
+    .filter(n => Number.isInteger(n) && n >= 1 && n <= posts.length)
+    .sort((a, b) => a - b);
+  return { answer: String(parsed.answer).trim(), cited, provider };
+}
+
 // ── Recommendations ────────────────────────────────────────────────────────────
 export interface RecommendationResult {
   recommendations: Array<{ name: string; mentions: number; context: string }>;

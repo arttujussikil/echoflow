@@ -5,6 +5,7 @@ import { searchRouter } from './routes/search';
 import { analyticsRouter } from './routes/analytics';
 import { redditRouter } from './routes/reddit';
 import { recsRouter } from './routes/recs';
+import { historyRouter } from './routes/history';
 import { logger } from '../utils/logger';
 import { registry } from '../collectors';
 import path from 'path';
@@ -27,6 +28,7 @@ export function setupRoutes(app: Express): void {
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/reddit', redditRouter);
   app.use('/api/recs', recsRouter);
+  app.use('/api/history', historyRouter);
 
   // List all registered sources, their capabilities and whether they need a key
   app.get('/api/platforms', (_req, res) => {

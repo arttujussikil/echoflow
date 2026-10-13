@@ -98,6 +98,79 @@
       </article>
     </section>
 
+    <!-- Ask the results (retrieval-augmented generation) -->
+    <section id="ask" class="card ask" hidden>
+      <header class="card__head">
+        <h2>Ask the results</h2>
+        <span class="muted">The AI answers only from the posts found, and shows which ones it used</span>
+      </header>
+      <div id="askLog" class="ask__log" aria-live="polite"></div>
+      <form id="askForm" class="ask__form">
+        <input id="askInput" type="text" maxlength="300" autocomplete="off" placeholder="e.g. Why are people negative about this?" aria-label="Question about the results" />
+        <button id="askBtn" class="search__btn" type="submit">Ask</button>
+      </form>
+      <div id="askSuggest" class="chips ask__suggest"></div>
+    </section>
+
+    <!-- Mood toward specific targets -->
+    <section id="targets" class="card targets" hidden>
+      <header class="card__head">
+        <h2>Mood toward…</h2>
+        <span class="muted">How the posts talk about a specific person, company or place, not their overall tone</span>
+      </header>
+      <form id="targetForm" class="ask__form">
+        <input id="targetInput" type="text" maxlength="120" autocomplete="off" placeholder="e.g. Google, EU, Russia (up to 3, comma-separated)" aria-label="Targets to measure the mood toward" />
+        <button id="targetBtn" class="search__btn" type="submit">Measure</button>
+      </form>
+      <div id="targetSuggest" class="chips ask__suggest"></div>
+      <div id="targetResults" class="target-results"></div>
+    </section>
+
+    <!-- Mood by source -->
+    <section id="bySource" class="card by-source" hidden>
+      <header class="card__head">
+        <h2>Mood by source</h2>
+        <span class="muted">Does the same topic feel different depending on where you read about it?</span>
+        <div class="seg" role="tablist" aria-label="Group sources by">
+          <button type="button" role="tab" class="seg__btn is-on" data-by="platform" aria-selected="true">Platform</button>
+          <button type="button" role="tab" class="seg__btn" data-by="outlet" aria-selected="false">Outlet</button>
+        </div>
+      </header>
+      <div class="chart-legend" aria-hidden="true">
+        <span><i class="key key--positive"></i>Positive</span>
+        <span><i class="key key--neutral"></i>Neutral</span>
+        <span><i class="key key--negative"></i>Negative</span>
+      </div>
+      <div id="bySourceRows" class="mbars"></div>
+      <details class="table-view">
+        <summary>Show as table</summary>
+        <div id="bySourceTable"></div>
+      </details>
+    </section>
+
+    <!-- Mood over time -->
+    <section id="overTime" class="card over-time" hidden>
+      <header class="card__head">
+        <h2>Mood over time</h2>
+        <span id="overTimeNote" class="muted"></span>
+        <div class="seg" role="tablist" aria-label="Time series">
+          <button type="button" role="tab" class="seg__btn is-on" data-time-view="published" aria-selected="true" title="The posts in this search, by when they were published">By publish date</button>
+          <button type="button" role="tab" class="seg__btn" data-time-view="saved" aria-selected="false" title="Earlier analyses of the same search, saved in the database">Saved analyses</button>
+        </div>
+      </header>
+      <div class="chart-legend" aria-hidden="true">
+        <span><i class="key key--positive"></i>Positive</span>
+        <span><i class="key key--neutral"></i>Neutral</span>
+        <span><i class="key key--negative"></i>Negative</span>
+        <span class="muted">Faded = fewer than 3 posts</span>
+      </div>
+      <div id="overTimeChart" class="tcols"></div>
+      <details class="table-view">
+        <summary>Show as table</summary>
+        <div id="overTimeTable"></div>
+      </details>
+    </section>
+
     <!-- Side-by-side model comparison (opened from the AI card) -->
     <section id="compare" class="card compare" hidden>
       <header class="card__head">
@@ -112,6 +185,10 @@
     <section id="feed" class="card feed" hidden>
       <header class="card__head feed__head">
         <h2>All results <span id="feedCount" class="muted"></span></h2>
+        <div class="seg" role="tablist" aria-label="Show posts or stories">
+          <button type="button" role="tab" class="seg__btn is-on" data-view="posts" aria-selected="true">Posts</button>
+          <button type="button" role="tab" class="seg__btn" data-view="stories" aria-selected="false" title="Posts about the same story grouped together">Stories <span id="storyCount" class="muted"></span></button>
+        </div>
         <div class="feed__filters">
           <div id="sentFilter" class="chips" aria-label="Filter by mood">
             <button type="button" class="chip is-on" data-sent="">All</button>
@@ -187,6 +264,7 @@
     </div>
   </aside>
 
+  <div id="chartTip" class="chart-tip" role="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/sentiment-keywords.js"></script>

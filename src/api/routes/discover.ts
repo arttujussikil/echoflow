@@ -32,7 +32,18 @@ interface SourceStatus {
  * Every source runs in parallel and one failing source never fails the request:
  * its error is reported in `sources[id].error` instead.
  */
+export interface DiscoverRequest {
+  query?: string; sources?: string[]; timeRange?: string; limit?: number;
+  feeds?: string[]; apiKeys?: Record<string, string>;
+}
+
 discoverRouter.post('/', async (req: Request, res: Response) => {
+  const result = await discover(req.body as DiscoverRequest);
+  return res.status(result.status).json(result.body);
+});
+
+/** The search itself; also used by the background topic tracker. */
+export async function discover(params: DiscoverRequest): Promise<{ status: number; body: any }> {
   const {
     query = '',
     sources: requestedSources,
@@ -40,10 +51,7 @@ discoverRouter.post('/', async (req: Request, res: Response) => {
     limit = 15,
     feeds = [],
     apiKeys = {},
-  } = req.body as {
-    query?: string; sources?: string[]; timeRange?: string; limit?: number;
-    feeds?: string[]; apiKeys?: Record<string, string>;
-  };
+  } = params;
 
   const keywords = String(query)
     .split(',')
@@ -53,7 +61,7 @@ discoverRouter.post('/', async (req: Request, res: Response) => {
   const feedUrls = (Array.isArray(feeds) ? feeds : []).filter(f => typeof f === 'string' && /^https?:\/\//.test(f));
 
   if (keywords.length === 0 && feedUrls.length === 0) {
-    return res.status(400).json({ error: 'Type something to search for' });
+    return { status: 400, body: { error: 'Type something to search for' } };
   }
 
   const perSourceLimit = Math.min(Math.max(Number(limit) || 15, 1), 50);
@@ -129,7 +137,7 @@ discoverRouter.post('/', async (req: Request, res: Response) => {
   }
   logger.info(`discover "${keywords.join(', ')}": ${results.length} results from ${Object.keys(status).length} sources`);
 
-  return res.json({
+  return { status: 200, body: {
     query: keywords.join(', '),
     keywords,
     timeRange,
@@ -137,8 +145,8 @@ discoverRouter.post('/', async (req: Request, res: Response) => {
     results,
     totalResults: results.length,
     timestamp: new Date().toISOString(),
-  });
-});
+  } };
+}
 
 function timeRangeCutoff(timeRange: string): number | null {
   const seconds: Record<string, number> = { hour: 3600, day: 86400, week: 604800, month: 2592000, year: 31536000 };

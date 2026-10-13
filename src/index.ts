@@ -4,6 +4,8 @@ import express from 'express';
 import { logger } from './utils/logger';
 import { setupRoutes } from './api/server';
 import { warmUpLocalSentiment } from './services/local-sentiment';
+import { warmUpEmbeddings } from './services/embeddings';
+import { startTracker } from './services/tracker';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,5 +19,9 @@ app.listen(PORT, () => {
   logger.info(`API available at http://localhost:${PORT}/api`);
 });
 
-// Download/load the offline sentiment model in the background (fallback when the cloud AI fails)
+// Download/load the local models in the background: offline sentiment fallback + embeddings (stories, Ask)
 warmUpLocalSentiment();
+warmUpEmbeddings();
+
+// Optional: analyse TRACK_TOPICS every few hours for the mood-over-time chart
+startTracker();

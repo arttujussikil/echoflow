@@ -105,6 +105,11 @@ let searchSeq = 0;           // guards against stale responses
 let aiStatus = null;         // from /api/analytics/status: which AI providers are configured
 let compare = null;          // side-by-side model comparison for the current results
 let topMode = 'popular';
+let bySourceMode = 'platform';
+let feedView = 'posts';
+let timeView = 'published';   // Mood over time: 'published' or 'saved'
+let askLog = [];
+let targetState = null;       // Mood toward: { targets, loading?, error?, results? }              // Ask the results: [{ q, a?, error?, citations?, ... }]       // All results: 'posts' or 'stories'  // Mood by source: group by 'platform' or 'outlet'
 let feedFilter = { sent: '', source: '', sort: 'popular', shown: FEED_PAGE };
 
 const $ = id => document.getElementById(id);
@@ -200,6 +205,8 @@ async function runSearch(query, bundle) {
   $('feed').hidden = true;
   compare = null;
   $('compare').hidden = true;
+  askLog = [];
+  targetState = null;
   $('sourceBar').hidden = true;
   $('stats').innerHTML = '';
   $('topList').innerHTML = `<li class="loading"><span class="spinner"></span>Searching ${enabledSources().length} sources…</li>`;
@@ -232,6 +239,7 @@ async function runSearch(query, bundle) {
     resetFeedFilter();
     renderAll();
 
+    loadStories(seq);
     if (current.results.length) await runAI(seq);
     else $('aiBody').innerHTML = `<p class="ai-foot">Nothing to analyse — try other keywords or a longer time range in Settings.</p>`;
   } catch (err) {
@@ -285,6 +293,8 @@ async function runAI(seq = searchSeq) {
       body: JSON.stringify({
         keyword: current.query || undefined,
         language: settings.aiLanguage,
+        // Saves the mood to the history for "Mood over time"
+        topic: current.query || (current.bundle ? `${FEED_BUNDLES[current.bundle]?.label} feeds` : undefined),
         posts: slimForAI(sample),
       }),
     });
@@ -320,6 +330,10 @@ function renderAll() {
   renderStats();
   renderTop();
   renderAI();
+  renderAsk();
+  renderTargets();
+  renderBySource();
+  renderOverTime();
   renderFeed();
   $('exportCsv').disabled = $('exportJson').disabled = !current.results.length;
 }
@@ -518,6 +532,8 @@ function renderFeed() {
   ), feedFilter.sort);
 
   $('feedCount').textContent = filtered.length === all.length ? `(${all.length})` : `(${filtered.length} of ${all.length})`;
+  $('storyCount').textContent = current.stories ? `(${current.stories.length})` : '';
+  if (feedView === 'stories') { renderStories(filtered); return; }
   const multiKeyword = new Set(all.map(p => p.metadata?.keyword).filter(Boolean)).size > 1;
 
   $('feedList').innerHTML = filtered.slice(0, feedFilter.shown).map(p => {
@@ -542,6 +558,76 @@ function renderFeed() {
   $('moreBtn').hidden = filtered.length <= feedFilter.shown;
 }
 
+// ── Stories: posts about the same thing, grouped by a local embedding model ─────
+async function loadStories(seq = searchSeq) {
+  current.stories = null;
+  current.storiesError = null;
+  if (current.results.length < 2) return;
+  try {
+    const res = await fetch('/api/analytics/stories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posts: current.results.map(p => ({ title: p.title })) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (seq !== searchSeq) return;
+    if (!res.ok) throw new Error(data.error || `Story grouping failed (${res.status})`);
+    // Index groups → the post objects themselves, so mood labels stay live
+    current.stories = data.stories.map(g => g.map(i => current.results[i]));
+    current.storyModel = data.model;
+    if (!askLog.length) renderAsk();
+  } catch (err) {
+    if (seq !== searchSeq) return;
+    current.storiesError = err.message;
+  }
+  renderFeed();
+}
+
+function renderStories(filtered) {
+  $('moreBtn').hidden = true;
+  if (!current.stories) {
+    $('feedList').innerHTML = current.storiesError
+      ? `<li class="ai-error">${esc(current.storiesError)}</li>`
+      : `<li class="loading"><span class="spinner"></span>Grouping posts into stories…</li>`;
+    return;
+  }
+  const visible = new Set(filtered);
+  const stories = current.stories
+    .map(posts => posts.filter(p => visible.has(p)))
+    .filter(posts => posts.length > 1)
+    .map(posts => sortPosts(posts, 'popular'));
+  const inStories = new Set(stories.flat());
+  const singles = filtered.filter(p => !inStories.has(p)).length;
+
+  const moodBar = posts => {
+    const n = posts.length;
+    const count = k => posts.filter(p => p._sent === k).length;
+    return `<span class="mbar__track story__bar" role="img" aria-label="${MOODS.map(([k, l]) => `${l.toLowerCase()} ${count(k)}`).join(', ')}">
+      ${MOODS.filter(([k]) => count(k)).map(([k, l]) => `<span class="mbar__seg seg-${k}" style="flex-grow:${count(k)}" data-tip="${esc(`${l}: ${count(k)} of ${n} posts`)}"></span>`).join('')}
+    </span>`;
+  };
+
+  $('feedList').innerHTML = stories.map(posts => {
+    const lead = posts[0];
+    const sources = [...new Set(posts.map(p => platformName(p.platform)))];
+    return `
+      <li class="story">
+        <details>
+          <summary>
+            <span class="story__title">${esc(lead.title)}</span>
+            <span class="story__meta"><b>${posts.length} posts</b> · ${esc(sources.slice(0, 4).join(', '))}${sources.length > 4 ? ` +${sources.length - 4}` : ''}</span>
+            ${moodBar(posts)}
+          </summary>
+          <ul class="story__posts">
+            ${posts.map(p => `<li><span class="dot dot--${p._sent}" title="${esc(moodTitle(p))}"></span>
+              <a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+              <span class="muted">${esc(sourceLabel(p))} · ${timeAgo(p._time)}</span></li>`).join('')}
+          </ul>
+        </details>
+      </li>`;
+  }).join('') + `<li class="ai-foot">${stories.length ? `${stories.length} stories covering ${inStories.size} posts. ` : 'No story is covered by more than one post. '}${singles} other posts stand alone. Grouped by meaning with ${esc(current.storyModel || 'a local embedding model')}, so the same story in Finnish and English can end up together.</li>`;
+}
+
 function moodTitle(p) {
   if (!p._ai) return `${p._sent} (keyword estimate, not checked by AI)`;
   if (p._by?.startsWith('local:')) return `${p._sent} (offline model ${p._by.slice(6)})`;
@@ -561,6 +647,388 @@ function engagementLabel(p) {
   if (e.score) parts.push(`↑ ${compact(e.score)}`);
   if (e.comments) parts.push(`💬 ${compact(e.comments)}`);
   return parts.join('  ');
+}
+
+// ── Ask the results ────────────────────────────────────────────────────────────
+function askSuggestions() {
+  const r = current.results;
+  const out = [];
+  const c = moodCounts();
+  out.push(c.negative >= c.positive ? 'Why are people negative about this?' : 'What are people positive about?');
+  if (current.stories?.length) out.push(`What is "${current.stories[0][0].title.slice(0, 50)}" about?`);
+  const top = [...new Set(r.map(p => platformName(p.platform)))].slice(0, 2);
+  if (top.length > 1) out.push(`How do ${top[0]} and ${top[1]} posts differ?`);
+  out.push('What is the most surprising thing here?');
+  return out.slice(0, 4);
+}
+
+function renderAsk() {
+  $('ask').hidden = !current?.results.length;
+  if ($('ask').hidden) return;
+  const posts = current.results;
+  $('askLog').innerHTML = askLog.map(turn => {
+    const q = `<p class="ask__q">${esc(turn.q)}</p>`;
+    if (turn.pending) return q + `<div class="loading"><span class="spinner"></span>Finding the relevant posts and reading them…</div>`;
+    if (turn.error) return q + `<p class="ai-error">${esc(turn.error)}</p>`;
+    // [n] → link to the cited post
+    const answer = esc(turn.answer).replace(/\[(\d+)\]/g, (m, n) => {
+      const p = posts[turn.citations[n]];
+      return p ? `<a class="cite" href="${safeUrl(p.url)}" target="_blank" rel="noopener" data-tip="${esc(`${sourceLabel(p)}: ${p.title}`)}">[${n}]</a>` : m;
+    });
+    const cited = Object.entries(turn.citations).map(([n, i]) => [n, posts[i]]).filter(([, p]) => p);
+    return q + `<p class="ask__a">${answer}</p>
+      ${cited.length ? `<ol class="ask__sources">${cited.map(([n, p]) => `<li value="${n}"><span class="dot dot--${p._sent}" title="${esc(moodTitle(p))}"></span>
+        <a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> <span class="muted">${esc(sourceLabel(p))}</span></li>`).join('')}</ol>` : ''}
+      <p class="ai-foot">Searched ${posts.length} posts by meaning (${esc(turn.retrieval)}), read the ${turn.retrieved} most relevant · ${esc(providerName(turn.provider))} · ${(turn.ms / 1000).toFixed(1)} s</p>`;
+  }).join('');
+  $('askSuggest').innerHTML = askLog.length ? '' : askSuggestions().map(s => `<button type="button" class="chip" data-q="${esc(s)}">${esc(s)}</button>`).join('');
+}
+
+async function ask(question) {
+  question = question.trim();
+  if (!question || !current?.results.length || askLog.some(t => t.pending)) return;
+  const seq = searchSeq;
+  const turn = { q: question, pending: true };
+  askLog.push(turn);
+  $('askInput').value = '';
+  renderAsk();
+  try {
+    const res = await fetch('/api/analytics/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        language: settings.aiLanguage,
+        history: askLog.filter(t => t.answer).slice(-3).map(t => ({ q: t.q, a: t.answer })),
+        posts: current.results.map(p => ({
+          title: p.title, content: (p.content || '').slice(0, 300), source: sourceLabel(p), mood: p._sent,
+        })),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (seq !== searchSeq) return;
+    if (!res.ok) throw new Error(data.error || `Question failed (${res.status})`);
+    Object.assign(turn, { answer: data.answer, citations: data.citations || {}, retrieved: data.retrieved?.length ?? 0, retrieval: data.retrieval, provider: data.provider, ms: data.ms });
+  } catch (err) {
+    if (seq !== searchSeq) return;
+    turn.error = err.message;
+  }
+  turn.pending = false;
+  renderAsk();
+}
+
+function wireAsk() {
+  $('askForm').addEventListener('submit', e => { e.preventDefault(); ask($('askInput').value); });
+  $('askSuggest').addEventListener('click', e => { const b = e.target.closest('[data-q]'); if (b) ask(b.dataset.q); });
+}
+
+// ── Mood over time ─────────────────────────────────────────────────────────────
+const LOW_N = 3;
+
+/** Bucket size from the span of the data: 3 h, day, week or month. */
+function timeBuckets(times) {
+  const span = Math.max(...times) - Math.min(...times);
+  const day = 86400_000;
+  if (span <= 2 * day) return { size: 3 * 3600_000, fmt: t => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }) };
+  if (span <= 45 * day) return { size: day, fmt: t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+  if (span <= 400 * day) return { size: 7 * day, fmt: t => `wk of ${new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` };
+  return { size: 30 * day, fmt: t => new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) };
+}
+
+function publishedSeries() {
+  const posts = current.results.filter(p => p._time);
+  if (posts.length < 2) return [];
+  const { size, fmt } = timeBuckets(posts.map(p => p._time));
+  const local = t => t - new Date(t).getTimezoneOffset() * 60_000; // bucket on local days
+  const map = new Map();
+  for (const p of posts) {
+    const k = Math.floor(local(p._time) / size) * size;
+    if (!map.has(k)) map.set(k, { k, positive: 0, neutral: 0, negative: 0, n: 0 });
+    const b = map.get(k);
+    b[p._sent]++;
+    b.n++;
+  }
+  // Fill empty buckets so gaps in time are visible
+  const keys = [...map.keys()].sort((a, b) => a - b);
+  const out = [];
+  for (let k = keys[0]; k <= keys[keys.length - 1]; k += size) {
+    const b = map.get(k) || { k, positive: 0, neutral: 0, negative: 0, n: 0 };
+    out.push({ ...b, label: fmt(k + new Date(k).getTimezoneOffset() * 60_000) });
+  }
+  return out.slice(-40);
+}
+
+async function loadSavedSeries() {
+  const topic = current.query || (current.bundle ? `${FEED_BUNDLES[current.bundle]?.label} feeds` : '');
+  current.saved = { loading: true, points: [] };
+  try {
+    const res = await fetch(`/api/history?topic=${encodeURIComponent(topic)}&days=90`);
+    const data = await res.json();
+    current.saved = { available: data.available, points: data.points || [] };
+  } catch {
+    current.saved = { available: false, points: [] };
+  }
+  renderOverTime();
+}
+
+function savedSeries() {
+  return (current.saved?.points || []).map(p => {
+    // Snapshots store percentages; turn them back into counts for the same chart
+    const n = p.n || 0;
+    const pos = Math.round((p.positive / 100) * n), neg = Math.round((p.negative / 100) * n);
+    return {
+      k: new Date(p.at).getTime(), n, positive: pos, negative: neg, neutral: Math.max(0, n - pos - neg),
+      label: new Date(p.at).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      origin: p.origin,
+    };
+  });
+}
+
+function renderOverTime() {
+  const card = $('overTime');
+  card.hidden = !current?.results.length;
+  if (card.hidden) return;
+  const pct = (x, n) => (n ? Math.round((x / n) * 100) : 0);
+  let series = [];
+  let empty = '';
+
+  if (timeView === 'saved') {
+    if (!current.saved) { loadSavedSeries(); return; }
+    series = savedSeries();
+    if (current.saved.loading) empty = 'Loading saved analyses…';
+    else if (!current.saved.available) empty = 'The database isn\'t reachable, so no history is saved. Start it with docker compose.';
+    else if (series.length < 2) empty = `${series.length ? 'Only one saved analysis' : 'No saved analyses'} of "${esc(current.query || 'this search')}" yet. Every analysis is saved, so search again later, or set TRACK_TOPICS to record it automatically every few hours.`;
+    $('overTimeNote').textContent = 'Each column is one earlier analysis of this search';
+  } else {
+    series = publishedSeries();
+    if (series.length < 2) empty = 'All posts were published at about the same time, so there is nothing to plot.';
+    $('overTimeNote').textContent = 'The posts in this search, by when they were published';
+  }
+
+  if (empty) {
+    $('overTimeChart').innerHTML = `<p class="ai-foot">${empty}</p>`;
+    $('overTimeTable').innerHTML = '';
+    return;
+  }
+
+  // Selective x labels: as many as fit (~72px each), always including the first
+  const fit = Math.max(2, Math.floor(($('overTimeChart').clientWidth || 900) / 72));
+  const every = Math.max(1, Math.ceil(series.length / fit));
+  $('overTimeChart').innerHTML = series.map((b, i) => {
+    const showLabel = i % every === 0;
+    const tip = b.n ? `${b.label} · ${b.n} posts · positive ${pct(b.positive, b.n)}%, neutral ${pct(b.neutral, b.n)}%, negative ${pct(b.negative, b.n)}%${b.origin === 'tracker' ? ' · automatic' : ''}` : `${b.label} · no posts`;
+    return `<div class="tcol${b.n < LOW_N ? ' is-low' : ''}" data-tip="${esc(tip)}">
+      <div class="tcol__stack" role="img" aria-label="${esc(tip)}">
+        ${b.n ? MOODS.filter(([k]) => b[k]).map(([k]) => `<span class="seg-${k}" style="flex-grow:${b[k]}"></span>`).join('') : ''}
+      </div>
+      <span class="tcol__label">${showLabel ? esc(b.label) : ''}</span>
+    </div>`;
+  }).join('');
+
+  $('overTimeTable').innerHTML = `<table class="data-table">
+    <thead><tr><th>${timeView === 'saved' ? 'Analysed' : 'Published'}</th><th>Posts</th>${MOODS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
+    <tbody>${series.filter(b => b.n).map(b => `<tr><td>${esc(b.label)}</td><td>${b.n}</td>${MOODS.map(([k]) => `<td>${pct(b[k], b.n)}%</td>`).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function wireOverTime() {
+  $('overTime').querySelectorAll('.seg__btn[data-time-view]').forEach(btn => btn.addEventListener('click', () => {
+    timeView = btn.dataset.timeView;
+    $('overTime').querySelectorAll('.seg__btn[data-time-view]').forEach(b => {
+      b.classList.toggle('is-on', b === btn);
+      b.setAttribute('aria-selected', String(b === btn));
+    });
+    if (timeView === 'saved' && current) current.saved = null; // refetch: the latest analysis may have been saved since
+    if (current) renderOverTime();
+  }));
+}
+
+// ── Mood toward specific targets ───────────────────────────────────────────────
+const TARGET_LABEL = { pos: 'positive', neu: 'neutral', neg: 'negative' };
+const NAME_STOP = new Set(('The This That These Those What When Where Why How Who Its It His Her Their Our Your New Top Best First Last Just More Most '
+  + 'After Before About From With Into Over Under Show Ask Watch Video Photo Breaking Exclusive Live Update Report Says Here There Today '
+  + 'Monday Tuesday Wednesday Thursday Friday Saturday Sunday January February March April May June July August September October November December').split(' '));
+
+/** Names that appear in at least 3 posts, as one-click suggestions (minus the search words). */
+function targetSuggestions() {
+  const query = new Set((current.query || '').toLowerCase().split(/[,\s]+/).filter(Boolean));
+  const counts = new Map();
+  for (const p of current.results) {
+    const names = new Set((p.title.match(/\b[A-ZÅÄÖ][\p{L}-]{1,}\b/gu) || []).filter(w => !NAME_STOP.has(w) && !query.has(w.toLowerCase())));
+    for (const n of names) counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  return [...counts.entries()].filter(([, c]) => c >= 3).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([n]) => n);
+}
+
+function renderTargets() {
+  $('targets').hidden = !current?.results.length;
+  if ($('targets').hidden) return;
+  const posts = current.results;
+  $('targetSuggest').innerHTML = targetState ? '' : targetSuggestions().map(n => `<button type="button" class="chip" data-target="${esc(n)}">${esc(n)}</button>`).join('');
+  if (!targetState) { $('targetResults').innerHTML = ''; return; }
+  if (targetState.loading) {
+    $('targetResults').innerHTML = `<div class="loading"><span class="spinner"></span>Finding posts about ${esc(targetState.targets.join(', '))} and reading them…</div>`;
+    return;
+  }
+  if (targetState.error) { $('targetResults').innerHTML = `<p class="ai-error">${esc(targetState.error)}</p>`; return; }
+
+  const pct = (x, n) => (n ? Math.round((x / n) * 100) : 0);
+  $('targetResults').innerHTML = targetState.results.map(r => {
+    const about = r.counts.pos + r.counts.neu + r.counts.neg;
+    const segs = [['pos', 'positive', 'Positive'], ['neu', 'neutral', 'Neutral'], ['neg', 'negative', 'Negative']];
+    const rows = Object.entries(r.posts).filter(([, v]) => v.s !== 'na').map(([i, v]) => ({ p: posts[i], ...v })).filter(x => x.p);
+    rows.sort((a, b) => ['neg', 'neu', 'pos'].indexOf(a.s) - ['neg', 'neu', 'pos'].indexOf(b.s));
+    return `
+      <details class="target">
+        <summary>
+          <span class="target__name">${esc(r.target)}</span>
+          ${about ? `<span class="mbar__track" role="img" aria-label="${segs.map(([k, , l]) => `${l.toLowerCase()} ${pct(r.counts[k], about)}%`).join(', ')}">
+            ${segs.filter(([k]) => r.counts[k]).map(([k, cls, l]) => `<span class="mbar__seg seg-${cls}" style="flex-grow:${r.counts[k]}" data-tip="${esc(`${r.target} · ${l}: ${r.counts[k]} of ${about} posts (${pct(r.counts[k], about)}%)`)}"></span>`).join('')}
+          </span>` : `<span class="muted">No post is about ${esc(r.target)}</span>`}
+          <span class="target__n">${about} posts</span>
+        </summary>
+        <ul class="story__posts">
+          ${rows.map(x => `<li><span class="dot dot--${TARGET_LABEL[x.s]}"></span>
+            <a href="${safeUrl(x.p.url)}" target="_blank" rel="noopener">${esc(x.p.title)}</a>
+            <span class="muted">${TARGET_LABEL[x.s]} toward ${esc(r.target)}${x.r ? ` — ${esc(x.r)}` : ''} · ${esc(sourceLabel(x.p))}</span></li>`).join('')}
+        </ul>
+      </details>`;
+  }).join('') + `<p class="ai-foot">Read ${targetState.results.map(r => `${r.considered} posts for ${esc(r.target)}`).join(', ')} (all that name it, plus the most similar by meaning); the rest aren't about it. ${esc(providerName(targetState.results[0]?.provider))}. Click a name to see the posts.</p>`;
+}
+
+async function measureTargets(text) {
+  const targets = text.split(',').map(t => t.trim()).filter(Boolean).slice(0, 3);
+  if (!targets.length || !current?.results.length || targetState?.loading) return;
+  const seq = searchSeq;
+  targetState = { targets, loading: true };
+  $('targetInput').value = targets.join(', ');
+  renderTargets();
+  try {
+    const res = await fetch('/api/analytics/target', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targets,
+        language: settings.aiLanguage,
+        posts: current.results.map(p => ({ title: p.title, content: (p.content || '').slice(0, 300) })),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (seq !== searchSeq) return;
+    if (!res.ok) throw new Error(data.error || `Measuring failed (${res.status})`);
+    targetState = { targets, results: data.results };
+  } catch (err) {
+    if (seq !== searchSeq) return;
+    targetState = { targets, error: err.message };
+  }
+  renderTargets();
+}
+
+function wireTargets() {
+  $('targetForm').addEventListener('submit', e => { e.preventDefault(); measureTargets($('targetInput').value); });
+  $('targetSuggest').addEventListener('click', e => {
+    const b = e.target.closest('[data-target]');
+    if (!b) return;
+    // Clicking suggestions builds up a list of up to 3
+    const cur = $('targetInput').value.split(',').map(t => t.trim()).filter(Boolean);
+    if (!cur.includes(b.dataset.target)) cur.push(b.dataset.target);
+    $('targetInput').value = cur.slice(0, 3).join(', ');
+    $('targetInput').focus();
+  });
+}
+
+// ── Mood by source ─────────────────────────────────────────────────────────────
+const BY_SOURCE_MAX_ROWS = 10;
+const MOODS = [['positive', 'Positive'], ['neutral', 'Neutral'], ['negative', 'Negative']];
+
+function outletOf(p) {
+  const m = p.metadata || {};
+  if (m.subreddit) return `r/${m.subreddit}`;
+  if (m.community) return `!${m.community}`;
+  return m.source || m.feedTitle || platformName(p.platform);
+}
+
+function renderBySource() {
+  const posts = current.results;
+  const card = $('bySource');
+  if (!posts.length) { card.hidden = true; return; }
+
+  const groups = new Map();
+  for (const p of posts) {
+    const key = bySourceMode === 'platform' ? p.platform : outletOf(p);
+    if (!groups.has(key)) groups.set(key, { key, name: bySourceMode === 'platform' ? platformName(key) : key, positive: 0, neutral: 0, negative: 0, n: 0 });
+    const g = groups.get(key);
+    g[p._sent]++;
+    g.n++;
+  }
+  let rows = [...groups.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  // Hide the chart when there is nothing to compare
+  card.hidden = rows.length < 2;
+  if (card.hidden) return;
+
+  // Fold the long tail into "Other" so the chart stays readable
+  if (rows.length > BY_SOURCE_MAX_ROWS) {
+    const tail = rows.slice(BY_SOURCE_MAX_ROWS - 1);
+    const other = { key: '', name: `Other (${tail.length} sources)`, positive: 0, neutral: 0, negative: 0, n: 0 };
+    for (const t of tail) for (const k of ['positive', 'neutral', 'negative', 'n']) other[k] += t[k];
+    rows = [...rows.slice(0, BY_SOURCE_MAX_ROWS - 1), other];
+  }
+
+  const pct = (x, n) => Math.round((x / n) * 100);
+  const clickable = bySourceMode === 'platform';
+  $('bySourceRows').innerHTML = rows.map(r => `
+    <div class="mbar${clickable && r.key ? ' is-clickable' : ''}" ${clickable && r.key ? `data-platform="${esc(r.key)}" role="button" tabindex="0" title="Show only ${esc(r.name)} posts"` : ''}>
+      <span class="mbar__name">${esc(r.name)}</span>
+      <span class="mbar__track" role="img" aria-label="${esc(r.name)}: ${MOODS.map(([k, l]) => `${l.toLowerCase()} ${pct(r[k], r.n)}%`).join(', ')}">
+        ${MOODS.filter(([k]) => r[k]).map(([k, l]) => `<span class="mbar__seg seg-${k}" style="flex-grow:${r[k]}"
+          data-tip="${esc(`${r.name} · ${l}: ${r[k]} of ${r.n} posts (${pct(r[k], r.n)}%)`)}"></span>`).join('')}
+      </span>
+      <span class="mbar__n">${r.n}</span>
+    </div>`).join('');
+
+  $('bySourceTable').innerHTML = `<table class="data-table">
+    <thead><tr><th>Source</th><th>Posts</th>${MOODS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${r.n}</td>${MOODS.map(([k]) => `<td>${r[k]} (${pct(r[k], r.n)}%)</td>`).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function wireBySource() {
+  $('bySource').querySelectorAll('.seg__btn[data-by]').forEach(btn => btn.addEventListener('click', () => {
+    bySourceMode = btn.dataset.by;
+    $('bySource').querySelectorAll('.seg__btn[data-by]').forEach(b => {
+      b.classList.toggle('is-on', b === btn);
+      b.setAttribute('aria-selected', String(b === btn));
+    });
+    if (current) renderBySource();
+  }));
+  const pick = row => {
+    feedFilter.source = row.dataset.platform;
+    feedFilter.shown = FEED_PAGE;
+    renderFeed();
+    $('feed').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  $('bySourceRows').addEventListener('click', e => { const row = e.target.closest('.mbar[data-platform]'); if (row) pick(row); });
+  $('bySourceRows').addEventListener('keydown', e => {
+    const row = e.target.closest('.mbar[data-platform]');
+    if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick(row); }
+  });
+}
+
+// ── Chart tooltip (any element with data-tip) ───────────────────────────────────
+function wireChartTips() {
+  const tip = $('chartTip');
+  const show = (el, x, y) => {
+    tip.textContent = el.dataset.tip;
+    tip.hidden = false;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = `${Math.min(window.innerWidth - w - 8, Math.max(8, x - w / 2))}px`;
+    tip.style.top = `${Math.max(8, y - h - 12)}px`;
+  };
+  document.addEventListener('mousemove', e => {
+    const el = e.target.closest?.('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.hidden = true;
+  });
+  document.addEventListener('scroll', () => { tip.hidden = true; }, true);
 }
 
 // ── Quick searches ─────────────────────────────────────────────────────────────
@@ -1013,8 +1481,11 @@ async function importFile(file) {
   resetFeedFilter();
   $('aiBody').innerHTML = '';
   compare = extra.comparison?.results ? { ...extra.comparison, seq: searchSeq } : null;
+  askLog = [];
+  targetState = null;
   $('compare').hidden = !compare;
   renderAll();
+  loadStories();
   if (compare) renderCompare();
   openSettings(false);
   toast(`Imported ${posts.length} results from ${file.name}`);
@@ -1063,9 +1534,9 @@ $('searchForm').addEventListener('submit', e => {
   runSearch($('searchInput').value.trim()).then(renderQuickBar);
 });
 
-document.querySelectorAll('.seg__btn').forEach(btn => btn.addEventListener('click', () => {
+document.querySelectorAll('.seg__btn[data-top]').forEach(btn => btn.addEventListener('click', () => {
   topMode = btn.dataset.top;
-  document.querySelectorAll('.seg__btn').forEach(b => {
+  document.querySelectorAll('.seg__btn[data-top]').forEach(b => {
     b.classList.toggle('is-on', b === btn);
     b.setAttribute('aria-selected', String(b === btn));
   });
@@ -1097,6 +1568,19 @@ $('aiLanguage').addEventListener('change', () => {
 });
 
 wireFilters();
+wireBySource();
+wireAsk();
+wireTargets();
+wireOverTime();
+document.querySelectorAll('.seg__btn[data-view]').forEach(btn => btn.addEventListener('click', () => {
+  feedView = btn.dataset.view;
+  document.querySelectorAll('.seg__btn[data-view]').forEach(b => {
+    b.classList.toggle('is-on', b === btn);
+    b.setAttribute('aria-selected', String(b === btn));
+  });
+  if (current) renderFeed();
+}));
+wireChartTips();
 
 $('quickAddForm').addEventListener('submit', e => {
   e.preventDefault();
