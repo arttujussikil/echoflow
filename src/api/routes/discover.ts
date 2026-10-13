@@ -63,7 +63,7 @@ discoverRouter.post('/', async (req: Request, res: Response) => {
   const searchable = registry.getAll().filter(c => c.capabilities.search && c.category !== 'feed');
   const selected: BaseCollector[] = Array.isArray(requestedSources)
     ? searchable.filter(c => requestedSources.includes(c.platformId))
-    : searchable.filter(c => c.isReady() || keyFor(c.platformId));
+    : searchable.filter(c => c.defaultEnabled && (c.isReady() || keyFor(c.platformId)));
 
   const status: Record<string, SourceStatus> = {};
   const collected: Post[] = [];

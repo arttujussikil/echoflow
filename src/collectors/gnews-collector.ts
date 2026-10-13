@@ -25,6 +25,7 @@ export class GoogleNewsCollector extends BaseCollector {
           'User-Agent': 'Mozilla/5.0 (compatible; EchoFlow/1.0; Feed Reader)',
           'Accept': 'application/rss+xml, application/xml, text/xml, */*',
         },
+        customFields: { item: ['source'] },
       });
     }
   }
@@ -43,17 +44,22 @@ export class GoogleNewsCollector extends BaseCollector {
         const d = new Date(item.pubDate ?? item.isoDate ?? 0);
         return d >= cutoff;
       }).slice(0, limit);
-      return items.map((item: any, i: number) => ({
+      return items.map((item: any, i: number) => {
+        const source = typeof item.source === 'string' ? item.source : item.source?._ ?? '';
+        // Google News titles end with " - <source>"
+        const title = source && item.title?.endsWith(` - ${source}`) ? item.title.slice(0, -(source.length + 3)) : item.title;
+        return {
         id: item.guid ?? item.link ?? `gnews-${i}`,
         platform: 'gnews' as const,
-        title: item.title ?? 'News article',
+        title: title ?? 'News article',
         content: item.contentSnippet || item.content || item.title || '',
-        author: item.creator ?? item['dc:creator'] ?? (item.source?._ ?? ''),
+        author: source || item.creator || '',
         url: item.link ?? '',
         createdAt: new Date(item.pubDate ?? item.isoDate ?? Date.now()),
         engagement: { likes: 0, comments: 0, shares: 0, score: 0 },
-        metadata: { source: item.source?._ ?? '' },
-      }));
+        metadata: { source },
+        };
+      });
     } catch (err: any) {
       logger.error('Google News search failed', { q, message: err.message });
       throw err;

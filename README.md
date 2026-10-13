@@ -260,6 +260,15 @@ Pick which ones to search with the **filter button** next to the search bar. New
 
 Free-tier limits are the providers' own figures and change from time to time. Every keyword in a search costs one request per source.
 
+### Finnish newspapers (no key needed)
+
+| Source | How |
+|---|---|
+| **Google News Suomi** (on by default) | All Finnish media in one search via Google News' Finnish edition |
+| Yle, Helsingin Sanomat, Ilta-Sanomat, Iltalehti, MTV Uutiset, Kaleva, Aamulehti, Turun Sanomat, Savon Sanomat, Keskisuomalainen, Satakunnan Kansa, Kauppalehti, Maaseudun Tulevaisuus, Uusi Suomi, Hufvudstadsbladet (off by default, pick in the filters) | Google News Finland restricted to the paper's site (`site:kaleva.fi`); the paper's own RSS feed is the fallback if Google News fails |
+
+Finnish papers have no public search APIs: Yle's API ([developer.yle.fi](https://developer.yle.fi/en/index.html)) needs registration and no longer serves news content, and RSS feeds only list the latest articles. Single papers are off by default so a normal search doesn't send 15 extra requests to Google News. Add or fix a paper in `FINNISH_OUTLETS` (`src/collectors/finnish-news-collector.ts`).
+
 ### RSS / Atom feeds
 
 Quick-search buttons can attach a curated feed bundle (World, Finland, Tech, Gaming, Esports; see `FEED_BUNDLES` in `public/app.js`). Through the API, any feed works: `POST /api/discover` with `feeds: [...]`, or `POST /api/search` with `platforms: ["rss"]` and feed URLs in `channels`.

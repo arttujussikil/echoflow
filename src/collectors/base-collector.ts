@@ -30,8 +30,8 @@ export interface CollectorCapabilities {
   requiresAuth: boolean;
 }
 
-/** social = discussion platforms, news = news APIs, feed = raw RSS/Atom */
-export type SourceCategory = 'social' | 'news' | 'feed';
+/** social = discussion platforms, news = news APIs, finnish = Finnish newspapers, feed = raw RSS/Atom */
+export type SourceCategory = 'social' | 'news' | 'finnish' | 'feed';
 
 export interface ApiKeyInfo {
   /** Env var the server reads the key from, e.g. GUARDIAN_API_KEY */
@@ -45,6 +45,8 @@ export interface PlatformInfo {
   displayName: string;
   category: SourceCategory;
   description?: string;
+  /** false = off until the user switches it on in the search filters */
+  defaultEnabled: boolean;
   capabilities: CollectorCapabilities;
   /** Present when the source needs an API key */
   apiKey?: ApiKeyInfo & { configured: boolean };
@@ -57,6 +59,7 @@ export abstract class BaseCollector {
   abstract readonly displayName: string;
   abstract readonly capabilities: CollectorCapabilities;
   readonly category: SourceCategory = 'social';
+  readonly defaultEnabled: boolean = true;
   readonly description?: string;
   readonly apiKeyInfo?: ApiKeyInfo;
 
@@ -93,6 +96,7 @@ export abstract class BaseCollector {
       displayName: this.displayName,
       category: this.category,
       description: this.description,
+      defaultEnabled: this.defaultEnabled,
       capabilities: this.capabilities,
       ...(this.apiKeyInfo
         ? { apiKey: { ...this.apiKeyInfo, configured: this.isReady() } }

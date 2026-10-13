@@ -21,6 +21,9 @@ const FEED_BUNDLES = {
       'https://www.hs.fi/rss/tuoreimmat.xml',
       'https://www.is.fi/rss/tuoreimmat.xml',
       'https://www.iltalehti.fi/rss/uutiset.xml',
+      'https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat',
+      'https://www.kaleva.fi/feedit/rss/managed-listing/rss-uusimmat/',
+      'https://www.ts.fi/rss.xml',
     ],
   },
   tech: {
@@ -66,7 +69,8 @@ const DEFAULT_QUICK = [
 const DEFAULT_SETTINGS = {
   timeRange: 'week',
   perSource: 15,
-  disabledSources: [],
+  disabledSources: [],  // default-on sources the user switched off
+  optIn: [],            // default-off sources (single Finnish papers) the user switched on
   aiLanguage: 'en',     // language the AI writes in: 'en' | 'fi'
   apiKeys: {},
   quick: DEFAULT_QUICK,
@@ -147,10 +151,24 @@ function rankWithinPlatform(posts) {
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────────
+function isSourceOn(p) {
+  return p.defaultEnabled === false ? settings.optIn.includes(p.id) : !settings.disabledSources.includes(p.id);
+}
+
+function setSourceOn(p, on) {
+  if (p.defaultEnabled === false) {
+    settings.optIn = settings.optIn.filter(x => x !== p.id);
+    if (on) settings.optIn.push(p.id);
+  } else {
+    settings.disabledSources = settings.disabledSources.filter(x => x !== p.id);
+    if (!on) settings.disabledSources.push(p.id);
+  }
+}
+
 function enabledSources() {
   return platforms
     .filter(p => p.category !== 'feed' && p.capabilities.search)
-    .filter(p => !settings.disabledSources.includes(p.id))
+    .filter(isSourceOn)
     .filter(p => !p.apiKey || p.apiKey.configured || settings.apiKeys[p.id])
     .map(p => p.id);
 }
@@ -628,14 +646,14 @@ function renderFilters() {
     $('fCount').textContent = '';
     return;
   }
-  const groups = [['social', 'Social & discussion'], ['news', 'News']];
+  const groups = [['social', 'Social & discussion'], ['news', 'News'], ['finnish', 'Finnish newspapers']];
   $('fSources').innerHTML = groups.map(([cat, title]) => {
     const chips = list.filter(p => p.category === cat).map(p => {
       if (!hasKey(p)) {
         return `<button type="button" class="src-chip is-locked" data-locked="${p.id}" title="${esc(p.displayName)} needs a free API key. Click to add it in Settings.">
           <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 1 1 6 0v3H9z"/></svg>${esc(p.displayName)}</button>`;
       }
-      const on = !settings.disabledSources.includes(p.id);
+      const on = isSourceOn(p);
       return `<button type="button" class="src-chip${on ? ' is-on' : ''}" aria-pressed="${on}" data-src="${p.id}" title="${esc(p.description || p.displayName)}">${esc(p.displayName)}</button>`;
     }).join('');
     return `<div class="src-group"><span class="src-group__title">${title}</span><div class="src-group__chips">${chips}</div></div>`;
@@ -657,9 +675,9 @@ function filterChange(fn) {
 /** Number on the filter button = how many filters differ from the defaults. */
 function updateFilterBadge() {
   const usable = searchablePlatforms().filter(hasKey).map(p => p.id);
-  const n = Number(settings.timeRange !== DEFAULT_SETTINGS.timeRange)
+    const n = Number(settings.timeRange !== DEFAULT_SETTINGS.timeRange)
     + Number(settings.perSource !== DEFAULT_SETTINGS.perSource)
-    + Number(usable.some(id => settings.disabledSources.includes(id)));
+    + Number(usable.some(id => settings.disabledSources.includes(id)) || settings.optIn.some(id => usable.includes(id)));
   $('filterBadge').hidden = !n;
   $('filterBadge').textContent = n;
 }
@@ -673,10 +691,8 @@ function wireFilters() {
     if (t.dataset.time) filterChange(() => { settings.timeRange = t.dataset.time; });
     else if (t.dataset.per) filterChange(() => { settings.perSource = Number(t.dataset.per); });
     else if (t.dataset.src) filterChange(() => {
-      const id = t.dataset.src;
-      settings.disabledSources = settings.disabledSources.includes(id)
-        ? settings.disabledSources.filter(x => x !== id)
-        : [...settings.disabledSources, id];
+      const p = platforms.find(x => x.id === t.dataset.src);
+      if (p) setSourceOn(p, !isSourceOn(p));
     });
     else if (t.dataset.locked) {
       openFilters(false);
@@ -684,12 +700,13 @@ function wireFilters() {
       $('keysSection').scrollIntoView({ block: 'start' });
       $('sourceList').querySelector(`[data-key="${t.dataset.locked}"]`)?.focus();
     }
-    else if (t.id === 'fAll') filterChange(() => { settings.disabledSources = []; });
-    else if (t.id === 'fNone') filterChange(() => { settings.disabledSources = searchablePlatforms().map(p => p.id); });
+    else if (t.id === 'fAll') filterChange(() => { searchablePlatforms().forEach(p => setSourceOn(p, true)); });
+    else if (t.id === 'fNone') filterChange(() => { searchablePlatforms().forEach(p => setSourceOn(p, false)); });
     else if (t.id === 'fReset') filterChange(() => {
       settings.timeRange = DEFAULT_SETTINGS.timeRange;
       settings.perSource = DEFAULT_SETTINGS.perSource;
       settings.disabledSources = [];
+      settings.optIn = [];
     });
   });
   // Close when clicking outside the search area. composedPath() is used because a
@@ -732,7 +749,8 @@ function renderSourceSettings() {
       if (v) {
         settings.apiKeys[id] = v;
         // A newly unlocked source should be on
-        settings.disabledSources = settings.disabledSources.filter(x => x !== id);
+        const p = platforms.find(x => x.id === id);
+        if (p) setSourceOn(p, true);
       } else delete settings.apiKeys[id];
       saveSettings();
       renderSourceSettings();
