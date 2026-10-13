@@ -21,10 +21,14 @@
  *   npm run eval -- --prompt both              # also test the old "ordered list" prompt
  *   npm run eval -- --make-template            # blind labelling sheet for a teammate
  *   npm run eval -- --human eval/human/teammate.csv
+ *   npm run eval -- --models hf:Xenova/twitter-roberta-base-sentiment-latest   # local Hugging Face model
  *
  * Options:
  *   --dataset D    headlines (default) | fpb | tweeteval | finsen | all
- *   --models a,b   models to test (default: app's NVIDIA chain + Gemini if its key is set)
+ *   --models a,b   models to test (default: app's NVIDIA chain + Gemini if its key is set).
+ *                  "hf:<repo>" runs a Hugging Face sentiment classifier locally (ONNX, via
+ *                  @huggingface/transformers): free, no key, no rate limit; downloaded once
+ *                  into eval/models-cache/
  *   --runs N       repeat each model N times (default 1)
  *   --limit N      only the first N items of each dataset (quick test)
  *   --prompt P     numbered (default) | array | both
@@ -129,7 +133,59 @@ async function labelBatch(model: string, items: DatasetItem[], mode: 'numbered' 
   return { preds: items.map(() => null), error: lastErr };
 }
 
+// ── Local Hugging Face classifiers ("hf:<repo>") ────────────────────────────────
+const hfPipelines = new Map<string, Promise<any>>();
+
+function hfPipeline(repo: string): Promise<any> {
+  if (!hfPipelines.has(repo)) {
+    hfPipelines.set(repo, (async () => {
+      const { pipeline, env } = await import('@huggingface/transformers');
+      env.cacheDir = path.join(__dirname, 'models-cache');
+      // A local folder (e.g. a model converted to ONNX yourself) works too
+      if (fs.existsSync(repo)) { env.allowLocalModels = true; env.localModelPath = ''; }
+      return pipeline('text-classification', repo);
+    })());
+  }
+  return hfPipelines.get(repo)!;
+}
+
+/** Map a classifier's label ("negative", "Very Positive", "LABEL_2", "1 star"…) to pos/neu/neg. */
+function mapHfLabel(label: string): Pred {
+  const l = label.toLowerCase();
+  if (l.includes('neg')) return 'neg';
+  if (l.includes('neu')) return 'neu';
+  if (l.includes('pos')) return 'pos';
+  const m = l.match(/label_(\d)/); // cardiffnlp-style index order: 0 neg, 1 neu, 2 pos
+  if (m) return (['neg', 'neu', 'pos'] as Label[])[Number(m[1])] ?? null;
+  const stars = l.match(/^(\d) star/);
+  if (stars) return Number(stars[1]) <= 2 ? 'neg' : Number(stars[1]) === 3 ? 'neu' : 'pos';
+  return null;
+}
+
+async function runLocalModel(model: string, items: DatasetItem[]) {
+  const t = Date.now();
+  const errors: string[] = [];
+  let preds: Pred[] = items.map(() => null);
+  try {
+    const clf = await hfPipeline(model.slice(3));
+    const loaded = Date.now();
+    preds = [];
+    for (let i = 0; i < items.length; i += 32) {
+      // Most classifiers accept at most 512 tokens; ~1,000 characters stays safely below that
+      const out = await clf(items.slice(i, i + 32).map(it => it.text.slice(0, 1000)));
+      preds.push(...(out as any[]).map(o => mapHfLabel((Array.isArray(o) ? o[0] : o).label)));
+      process.stdout.write('.');
+    }
+    // Report inference time only; the one-off download/load is not part of it
+    return { preds, ms: Date.now() - loaded, errors };
+  } catch (err: any) {
+    errors.push(err.message);
+    return { preds, ms: Date.now() - t, errors };
+  }
+}
+
 async function runModel(model: string, items: DatasetItem[], mode: 'numbered' | 'array') {
+  if (model.startsWith('hf:')) return runLocalModel(model, items);
   const t = Date.now();
   const preds: Pred[] = [];
   const errors: string[] = [];
@@ -257,15 +313,18 @@ async function benchmarkDataset(ds: Dataset) {
     results.push({ method: 'Teammate (human)', prompt: '—', preds: items.map(it => h.get(it.id) ?? null), ms: 0, okRuns: 1, errors: [], isModel: false });
   }
 
-  if (process.env.NVIDIA_API_KEY || process.env.GEMINI_API_KEY) {
-    const jobs = models.flatMap(model => modes.map(mode => ({ model, mode })));
+  const haveKeys = Boolean(process.env.NVIDIA_API_KEY || process.env.GEMINI_API_KEY);
+  const runnable = models.filter(m => m.startsWith('hf:') || haveKeys);
+  if (runnable.length) {
+    // Local classifiers have no prompt, so they run once whatever --prompt says
+    const jobs = runnable.flatMap(model => (model.startsWith('hf:') ? ['numbered' as const] : modes).map(mode => ({ model, mode })));
     const done = await Promise.all(jobs.map(async ({ model, mode }) => {
       const all = [];
       for (let r = 0; r < runs; r++) all.push(await runModel(model, items, mode));
       // Report the run with the best coverage; keep the error notes of all runs
       const best = [...all].sort((a, b) => b.preds.filter(Boolean).length - a.preds.filter(Boolean).length)[0];
       const okRuns = all.filter(r => r.preds.some(Boolean)).length;
-      return { method: model, prompt: mode, preds: best.preds, ms: best.ms, okRuns, errors: all.flatMap(r => r.errors), isModel: true };
+      return { method: model, prompt: model.startsWith('hf:') ? '—' : mode, preds: best.preds, ms: best.ms, okRuns, errors: all.flatMap(r => r.errors), isModel: true };
     }));
     results.push(...done);
   }

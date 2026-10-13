@@ -44,3 +44,4 @@ docker-compose.override.yml
 # Benchmark datasets (downloaded by npm run eval:data; see eval/datasets/README.md)
 eval/datasets/data/
 !eval/human/*.csv
+eval/models-cache/
