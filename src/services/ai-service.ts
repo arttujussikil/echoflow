@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Post } from '../models/post';
 import { logger } from '../utils/logger';
 import { envSecret } from '../utils/env';
+import { labelLocally, localSentimentEnabled, localSentimentName } from './local-sentiment';
 
 export type SentimentLabel = 'pos' | 'neu' | 'neg';
 
@@ -21,6 +22,8 @@ export interface AIAnalysis {
   postCount: number;
   /** How many posts got an AI label */
   labelledCount: number;
+  /** Who produced the mood labels (can differ from `provider`, which wrote the summary) */
+  labelProvider?: string;
   analyzedAt: string;
   /** Wall-clock time of the whole analysis */
   durationMs: number;
@@ -81,13 +84,14 @@ export function providerConfigured(p: ProviderId): boolean {
  * Models to try, in order. With `only`, just that provider's models (no fallback),
  * so a comparison never silently shows one provider's answer under another's name.
  */
-function modelChain(only?: ProviderId): ModelRef[] {
+function modelChain(only?: ProviderId | 'cloud'): ModelRef[] {
   const nvidia = NVIDIA_API_KEY ? NVIDIA_MODELS.map(model => ({ provider: 'nvidia' as const, model })) : [];
   const gemini = GEMINI_API_KEY ? GEMINI_MODELS.map(model => ({ provider: 'gemini' as const, model })) : [];
   const ollama = [{ provider: 'ollama' as const, model: OLLAMA_MODEL }];
   if (only === 'nvidia') return nvidia;
   if (only === 'gemini') return gemini;
   if (only === 'ollama') return ollama;
+  if (only === 'cloud') return [...nvidia, ...gemini];
   return [...nvidia, ...gemini, ...ollama];
 }
 
@@ -207,7 +211,7 @@ async function askJSON(
   task: string,
   maxTokens: number,
   accept: (parsed: any) => boolean = () => true,
-  only?: ProviderId
+  only?: ProviderId | 'cloud'
 ): Promise<{ parsed: any; provider: string }> {
   const chain = modelChain(only);
   if (!chain.length) throw new Error(`${(only ?? 'AI').toUpperCase()} is not configured (no API key)`);
@@ -288,11 +292,43 @@ export function readLabels(parsed: any, count: number): LabelResult {
   return { labels, reasons };
 }
 
+/**
+ * Label one batch: cloud LLMs first (labels + reasons). If none answers, the local
+ * Hugging Face classifier (labels only), then Ollama as a last resort.
+ * With `only` (side-by-side comparison) there is no fallback at all.
+ */
 async function labelBatch(posts: Post[], language: AILanguage, only?: ProviderId): Promise<LabelResult & { provider: string }> {
   // Reject answers that cover less than 80% of the batch so the next model gets a go
   const enough = (parsed: any) => readLabels(parsed, posts.length).labels.filter(Boolean).length >= posts.length * 0.8;
+  const prompt = buildLabelPrompt(posts, language);
+  const task = `label ${posts.length} posts`;
   // A short reason per post makes the answer ~1-2k tokens for a batch of 40
-  const { parsed, provider } = await askJSON(buildLabelPrompt(posts, language), `label ${posts.length} posts`, 3000, enough, only);
+  if (only) {
+    const { parsed, provider } = await askJSON(prompt, task, 3000, enough, only);
+    return { ...readLabels(parsed, posts.length), provider };
+  }
+
+  let cloudError: any;
+  if (modelChain('cloud').length) {
+    try {
+      const { parsed, provider } = await askJSON(prompt, task, 3000, enough, 'cloud');
+      return { ...readLabels(parsed, posts.length), provider };
+    } catch (err) {
+      cloudError = err;
+    }
+  }
+  if (localSentimentEnabled()) {
+    try {
+      const t = Date.now();
+      const texts = posts.map(p => `${p.title ?? ''}${p.content && p.content !== p.title ? ` — ${p.content.slice(0, 300)}` : ''}`);
+      const labels = await labelLocally(texts);
+      logger.info(`${task}: local ${localSentimentName()} answered in ${Date.now() - t} ms${cloudError ? ` (cloud failed: ${cloudError.message})` : ''}`);
+      return { labels, reasons: posts.map(() => null), provider: `local:${localSentimentName()}` };
+    } catch (err: any) {
+      logger.warn(`${task}: local model failed: ${err.message}`);
+    }
+  }
+  const { parsed, provider } = await askJSON(prompt, task, 3000, enough, 'ollama');
   return { ...readLabels(parsed, posts.length), provider };
 }
 
@@ -409,6 +445,7 @@ export async function analyzeWithAI(posts: Post[], keyword?: string, language: A
     sentiment,
     articleLabels: labels,
     articleReasons: reasons,
+    labelProvider: labelRes.status === 'fulfilled' ? labelRes.value.provider : undefined,
     labelledCount: labelled.length,
     themes: strings(summary.themes, 8),
     summary: typeof summary.summary === 'string' ? summary.summary : '',
@@ -489,6 +526,8 @@ export interface AIStatus {
   gemini: boolean;
   geminiModel: string;
   geminiModels: string[];
+  /** Offline Hugging Face classifier used for mood labels when the cloud fails */
+  localModel: string | null;
 }
 
 export async function checkOllamaStatus(): Promise<AIStatus> {
@@ -496,6 +535,7 @@ export async function checkOllamaStatus(): Promise<AIStatus> {
     model: OLLAMA_MODEL, host: OLLAMA_HOST,
     nvidia: Boolean(NVIDIA_API_KEY), nvidiaModel: NVIDIA_MODELS[0] ?? '', nvidiaModels: NVIDIA_MODELS,
     gemini: Boolean(GEMINI_API_KEY), geminiModel: GEMINI_MODELS[0] ?? '', geminiModels: GEMINI_MODELS,
+    localModel: localSentimentEnabled() ? localSentimentName() : null,
   };
   try {
     await axios.get(`${OLLAMA_HOST}/api/tags`, { timeout: 3000 });

@@ -202,11 +202,13 @@ npm start      # run compiled output
 | `GEMINI_API_KEY` | — | Free [Google AI Studio](https://aistudio.google.com/apikey) key. Adds Gemini as a backup provider and enables the side-by-side model comparison |
 | `GEMINI_MODEL` | `gemini-3.8-flash,gemini-3.5-flash` | Gemini model IDs, comma-separated, tried in order |
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
-| `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (used when no NVIDIA key) |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (last resort for the summary) |
+| `LOCAL_SENTIMENT_MODEL` | `onnx-community/twitter-xlm-roberta-base-sentiment-ONNX@q8` | Offline Hugging Face classifier that labels moods when the cloud AI doesn't answer. `off` disables it |
+| `LOCAL_MODEL_CACHE` | `./models-cache` (`/app/models-cache` in Docker, a volume) | Where the offline model is downloaded |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Optional Reddit OAuth app. Without it, Reddit search falls back to RSS (no scores) |
 | `GUARDIAN_API_KEY`, `NYT_API_KEY`, `GNEWS_API_KEY`, `NEWSDATA_API_KEY`, `CURRENTS_API_KEY`, `THENEWSAPI_KEY`, `NEWSAPI_KEY`, `MEDIASTACK_API_KEY` | — | Optional free news API keys, see [Supported Sources](#supported-sources). Each source turns on when its key is set |
 
-**AI provider priority:** NVIDIA NIM → Google Gemini → Ollama. Each is skipped if not configured; all are free. The **⇄ Compare NVIDIA vs Gemini** button in the AI card runs both providers on the same posts with no fallback between them.
+**AI provider priority:** NVIDIA NIM → Google Gemini → Ollama for the summary and opinion. For the mood labels: NVIDIA → Gemini → the **offline Hugging Face model** (runs inside the web container, ~280 MB, labels only, no reasons) → Ollama. Each is skipped if not configured; all are free. The **⇄ Compare NVIDIA vs Gemini** button in the AI card runs both providers on the same posts with no fallback between them.
 
 **Recommended NVIDIA NIM models** (free tier, set via `NVIDIA_MODEL`):
 

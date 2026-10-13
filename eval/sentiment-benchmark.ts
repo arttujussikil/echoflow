@@ -136,17 +136,19 @@ async function labelBatch(model: string, items: DatasetItem[], mode: 'numbered' 
 // ── Local Hugging Face classifiers ("hf:<repo>") ────────────────────────────────
 const hfPipelines = new Map<string, Promise<any>>();
 
-function hfPipeline(repo: string): Promise<any> {
-  if (!hfPipelines.has(repo)) {
-    hfPipelines.set(repo, (async () => {
+/** spec = "<repo>" or "<repo>@<dtype>", e.g. "onnx-community/twitter-xlm-roberta-base-sentiment-ONNX@q8" */
+function hfPipeline(spec: string): Promise<any> {
+  const [repo, dtype] = spec.split('@');
+  if (!hfPipelines.has(spec)) {
+    hfPipelines.set(spec, (async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
       env.cacheDir = path.join(__dirname, 'models-cache');
       // A local folder (e.g. a model converted to ONNX yourself) works too
       if (fs.existsSync(repo)) { env.allowLocalModels = true; env.localModelPath = ''; }
-      return pipeline('text-classification', repo);
+      return pipeline('text-classification', repo, dtype ? { dtype: dtype as any } : {});
     })());
   }
-  return hfPipelines.get(repo)!;
+  return hfPipelines.get(spec)!;
 }
 
 /** Map a classifier's label ("negative", "Very Positive", "LABEL_2", "1 star"…) to pos/neu/neg. */

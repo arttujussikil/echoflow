@@ -4,6 +4,9 @@ services:
     container_name: echoflow-web
     env_file:
       - .env
+    volumes:
+      # Offline sentiment model (~280 MB), downloaded once on first start
+      - models_cache:/app/models-cache
     ports:
       - "3000:3000"
     depends_on:
@@ -46,3 +49,4 @@ services:
 volumes:
   db_data:
   ollama_data:
+  models_cache:

@@ -299,6 +299,7 @@ async function runAI(seq = searchSeq) {
         sample[i]._sent = labelMap[label];
         sample[i]._ai = true;
         sample[i]._reason = data.articleReasons?.[i] || null;
+        sample[i]._by = data.labelProvider || null;
       }
     });
     current.analysis = data;
@@ -385,8 +386,15 @@ function renderTop() {
     </li>`).join('');
 }
 
-const PROVIDER_LABEL = a => !a.provider ? '' : a.provider.startsWith('nvidia')
-  ? `NVIDIA NIM · ${a.provider.split('/').pop()}` : `Ollama · ${a.provider.replace(/^ollama:/, '')}`;
+/** "nvidia:nvidia/nemotron-3-super…" → "NVIDIA NIM · nemotron-3-super…" */
+function providerName(p) {
+  if (!p) return '';
+  const [kind, ...rest] = p.split(':');
+  const model = rest.join(':').split('/').pop();
+  const names = { nvidia: 'NVIDIA NIM', gemini: 'Google Gemini', ollama: 'Ollama', local: 'Offline model' };
+  return `${names[kind] || kind} · ${model}`;
+}
+const PROVIDER_LABEL = a => providerName(a.provider);
 
 function moodCounts() {
   const c = { positive: 0, neutral: 0, negative: 0 };
@@ -436,7 +444,8 @@ function renderAI() {
     ${a.opinion ? `<div class="ai-block"><h3>AI's opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
     ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
     ${a.insights?.length ? `<div class="ai-block"><h3>Insights</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
-    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}</p>
+    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}
+      ${a.labelProvider?.startsWith('local:') ? `<br>The cloud AI didn't answer, so the moods come from the <b>offline model</b> (${esc(providerName(a.labelProvider).split(' · ')[1])}), which gives labels but no reasons.` : ''}</p>
     ${compareButton()}`;
   wireLegend();
   wireCompareButton();
@@ -535,6 +544,7 @@ function renderFeed() {
 
 function moodTitle(p) {
   if (!p._ai) return `${p._sent} (keyword estimate, not checked by AI)`;
+  if (p._by?.startsWith('local:')) return `${p._sent} (offline model ${p._by.slice(6)})`;
   return `${p._sent} (AI)${p._reason ? `: ${p._reason}` : ''}`;
 }
 
@@ -781,7 +791,8 @@ async function loadAIStatus() {
       : s.available ? `Ollama · ${s.model}` : 'offline';
     $('aiPill').textContent = `AI: ${label}`;
     $('aiPill').classList.toggle('is-ok', Boolean(s.nvidia || s.gemini || s.available));
-    const geminiNote = s.gemini ? ` Gemini (<code>${esc(s.geminiModel)}</code>) is set up as backup and for comparison.` : '';
+    const geminiNote = (s.gemini ? ` Gemini (<code>${esc(s.geminiModel)}</code>) is set up as backup and for comparison.` : '')
+      + (s.localModel ? ` If the cloud AI doesn't answer, an offline model (<code>${esc(s.localModel)}</code>) labels the moods.` : '');
     $('aiInfo').innerHTML = s.nvidia
       ? `Using NVIDIA NIM (<code>${esc(s.nvidiaModel)}</code>)${s.available ? `, falling back to local Ollama (<code>${esc(s.model)}</code>)` : ''}.${geminiNote}`
       : s.gemini ? `Using Google Gemini (<code>${esc(s.geminiModel)}</code>).`
@@ -959,7 +970,7 @@ function exportName(ext) {
 }
 
 function exportJson() {
-  const results = current.results.map(({ _pop, _rank, _time, _sent, _ai, _reason, ...p }) => ({
+  const results = current.results.map(({ _pop, _rank, _time, _sent, _ai, _reason, _by, ...p }) => ({
     ...p, sentiment: _sent, labelledBy: _ai ? 'ai' : 'keywords', moodReason: _reason || undefined,
   }));
   download(exportName('json'), JSON.stringify({

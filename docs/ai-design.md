@@ -136,6 +136,25 @@ npm run eval -- --models nvidia/nemotron-3-super-120b-a12b,gemini-3.5-flash
 
 ---
 
+### Small local models from Hugging Face
+
+LLMs are not the only option. Hugging Face has small classifiers trained only for sentiment that run on a laptop CPU with no key and no rate limit. `npm run eval -- --models hf:<repo>` runs any of them locally (ONNX via `@huggingface/transformers`). Results on the same four test sets ([`eval/results/2026-10-13-hf-local.md`](../eval/results/2026-10-13-hf-local.md)):
+
+| Model (size) | Our headlines | Financial PhraseBank | TweetEval | FinnSentiment |
+|---|---|---|---|---|
+| Nemotron 3 Super, cloud LLM (for comparison) | 98% | 77% | 68% | 75% |
+| **twitter-xlm-roberta-base-sentiment** (Cardiff NLP, 278M, multilingual) | 78% (82% at q8) | 58% | 70% | 74% |
+| twitter-roberta-base-sentiment-latest (Cardiff NLP, English) | 74% | 62% | 70% | 39% |
+| multilingual-sentiment-analysis (tabularisai) | 74% | 51% | 49% | 43% |
+| distilbert-base-multilingual-cased-sentiments-student | 60% | 39% | 55% | 42% |
+| finbert-finnsentiment (Turku FinBERT, Finnish only) | 48% | 57% | 40% | 93%* |
+| Keyword list (no AI) | 64% | 63% | 42% | 33% |
+
+- **xlm-roberta is the surprise.** It's a 278M-parameter model, about 400× smaller than the cloud LLM. On tweets and Finnish forum posts it matches the LLM, even though it was never fine-tuned on Finnish (only pre-trained on it). It falls behind on news, where knowing *what is bad news* matters more than tone.
+- **\*FinBERT's 93% is data leakage, not skill.** It was fine-tuned on 90% of the FinnSentiment corpus, so most of our 300 test sentences were in its training data. The warning signs are in the numbers. It agrees with the human annotators *more* often (82%) than they agree with each other (70%), and it gets 99% of the sentences all three humans agreed on. On data it hasn't seen (our headlines, tweets) it is the weakest model. Leakage like this is easy to miss when a model is downloaded from a hub.
+- **Quantization is free here.** The 8-bit version of xlm-roberta (`@q8`, ~280 MB) scored the same as or slightly better than the full 1.1 GB model, and ran ~4× faster. The 4-bit version lost 2–8 points.
+- **We use it in the app.** xlm-roberta (q8) labels the moods when NVIDIA and Gemini don't answer, instead of the 3B Ollama model, which mislabelled or skipped most posts. It runs inside the web container and labels 40 posts in a few hundred milliseconds. It gives no reasons and can't write the summary, so the UI says when it was used.
+
 ## 4. Summary, opinion and language
 
 The summary request sees 25 posts. They are picked round-robin across sources, so one loud platform can't dominate, with the most engaged posts first. It returns a summary, the **AI's own opinion** (the prompt asks it to take a stance on whether the reaction seems justified), themes, insights and one overall mood word.
@@ -152,4 +171,5 @@ The settings drawer has **AI writes in: English / Suomi**. It adds one instructi
 - **Headlines only.** Most posts are judged from their title and the first ~160 characters. Sarcasm, images and context outside the text are invisible to the model ("Miss this guy." is a photo post).
 - **Mood ≠ stance.** "Negative" means bad news or a critical tone, not that people are against the topic. A halt to a damaging project is labelled negative news even if many readers welcome it.
 - **Free endpoints vary.** Response times range from ~3 s to ~30 s, and models can be busy or retired. The fallback chain hides this from the user but not the delay.
+- **Hub models need checking.** A model's own reported accuracy, or a score on a public dataset, may come from overlap with its training data (see FinBERT above). Always check the model card for what it was trained on.
 - **Limits per search.** Up to 200 posts are labelled; anything beyond that (rare) keeps a keyword estimate, marked with `*` in the UI.

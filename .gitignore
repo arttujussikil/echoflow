@@ -45,3 +45,4 @@ docker-compose.override.yml
 eval/datasets/data/
 !eval/human/*.csv
 eval/models-cache/
+models-cache/

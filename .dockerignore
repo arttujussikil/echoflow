@@ -7,3 +7,8 @@ Dockerfile*
 docker-compose*.yml
 .env
 .DS_Store
+# Downloaded models and benchmark data (large; the container downloads its own model)
+eval/models-cache
+eval/datasets/data
+models-cache
+logs
