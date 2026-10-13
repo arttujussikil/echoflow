@@ -12,6 +12,8 @@
  *   fpb        Financial PhraseBank, 300 news sentences by annotator-agreement level
  *   tweeteval  TweetEval sentiment, 300 tweets
  *   finsen     FinnSentiment, 300 Finnish sentences with 3 human labels each
+ *   newsmtsc   NewsMTSC, 300 news sentences labelled toward a named person ("Mood toward…");
+ *              LLMs run with the target prompt and, for comparison, the plain document prompt
  *   (fpb / tweeteval / finsen are downloaded with: npm run eval:data)
  *
  * Usage (needs NVIDIA_API_KEY and/or GEMINI_API_KEY in .env):
@@ -19,12 +21,12 @@
  *   npm run eval -- --dataset all --out eval/results/my-run.md
  *   npm run eval -- --dataset finsen --models gemini-3.5-flash --limit 40
  *   npm run eval -- --prompt both              # also test the old "ordered list" prompt
- *   npm run eval -- --make-template            # blind labelling sheet for a teammate
- *   npm run eval -- --human eval/human/teammate.csv
+ *   npm run eval -- --make-template            # writes eval/human/label.html, the labelling tool
+ *   npm run eval -- --dataset headlines,finsen --human eval/human/niko.csv
  *   npm run eval -- --models hf:Xenova/twitter-roberta-base-sentiment-latest   # local Hugging Face model
  *
  * Options:
- *   --dataset D    headlines (default) | fpb | tweeteval | finsen | all
+ *   --dataset D    headlines (default) | fpb | tweeteval | finsen | newsmtsc | all
  *   --models a,b   models to test (default: app's NVIDIA chain + Gemini if its key is set).
  *                  "hf:<repo>" runs a Hugging Face sentiment classifier locally (ONNX, via
  *                  @huggingface/transformers): free, no key, no rate limit; downloaded once
@@ -32,13 +34,14 @@
  *   --runs N       repeat each model N times (default 1)
  *   --limit N      only the first N items of each dataset (quick test)
  *   --prompt P     numbered (default) | array | both
- *   --human FILE   CSV with columns id,label (pos/neu/neg) from a second human
+ *   --human FILE   CSV from eval/human/label.html (id,...,label): a second human's labels,
+ *                  compared with the reference labels, the original annotators and the models
  *   --out FILE     write the markdown report there (+ FILE.json with every prediction)
  */
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { buildLabelPrompt, readLabels, modelJSON, SentimentLabel } from '../src/services/ai-service';
+import { buildLabelPrompt, readLabels, buildTargetPrompt, readTargetLabels, modelJSON, SentimentLabel } from '../src/services/ai-service';
 import { Post } from '../src/models/post';
 import type { Dataset, DatasetItem } from './datasets/fetch-datasets';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -70,6 +73,8 @@ const humanFile = arg('human');
 const outFile = arg('out');
 
 const BATCH = 40;
+/** numbered = app's mood prompt, array = old ordered-list prompt, target = "Mood toward…" prompt */
+type Mode = 'numbered' | 'array' | 'target';
 
 // ── Datasets ───────────────────────────────────────────────────────────────────
 function loadDataset(name: string): Dataset {
@@ -114,13 +119,19 @@ const toPost = (it: DatasetItem): Post => ({
 });
 
 /** One batch, retrying when a free endpoint is busy or rate-limited. */
-async function labelBatch(model: string, items: DatasetItem[], mode: 'numbered' | 'array'): Promise<{ preds: Pred[]; error?: string }> {
+async function labelBatch(model: string, items: DatasetItem[], mode: Mode): Promise<{ preds: Pred[]; error?: string }> {
   const posts = items.map(toPost);
-  const prompt = mode === 'numbered' ? buildLabelPrompt(posts) : buildArrayPrompt(posts);
+  const prompt = mode === 'target'
+    ? buildTargetPrompt(items.map(it => ({ text: it.text, target: it.target ?? '' })))
+    : mode === 'numbered' ? buildLabelPrompt(posts) : buildArrayPrompt(posts);
   let lastErr = '';
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const parsed = await modelJSON(model, prompt, 3000);
+      if (mode === 'target') {
+        // 'na' ("not about the target") is always wrong here: every sentence names its target
+        return { preds: readTargetLabels(parsed, posts.length).labels.map(l => (l === 'na' ? null : l)) };
+      }
       return { preds: mode === 'numbered' ? readLabels(parsed, posts.length).labels : readArray(parsed, posts.length) };
     } catch (err: any) {
       const status = err.response?.status;
@@ -186,7 +197,7 @@ async function runLocalModel(model: string, items: DatasetItem[]) {
   }
 }
 
-async function runModel(model: string, items: DatasetItem[], mode: 'numbered' | 'array') {
+async function runModel(model: string, items: DatasetItem[], mode: Mode) {
   if (model.startsWith('hf:')) return runLocalModel(model, items);
   const t = Date.now();
   const preds: Pred[] = [];
@@ -283,18 +294,35 @@ function readHumanCsv(file: string): Map<string, Label> {
   return out;
 }
 
+/** Name shown for the --human labels, from the file name (eval/human/niko.csv → "niko") */
+const humanName = humanFile ? path.basename(humanFile).replace(/\.[^.]+$/, '') : '';
+const HUMAN_LABEL = `Human: ${humanName}`;
+
+const FINSEN_FOR_HUMANS = 100;
+
+/**
+ * Writes eval/human/label.html: a self-contained labelling page (no server, no
+ * install). Part 1 = our 50 headlines, part 2 = the first FINSEN_FOR_HUMANS items of
+ * the locked FinnSentiment sample (CC BY 4.0, so the texts may be shared with credit).
+ * Labels are hidden; the order is shuffled within each part.
+ */
 function makeTemplate() {
-  const ds = loadDataset('headlines');
-  // Shuffled so the order doesn't hint at anything; no labels included
-  const order = ds.items.map((it, i) => ({ it, k: (i * 7919) % 101 })).sort((a, b) => a.k - b.k).map(x => x.it);
-  const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
-  const csv = '﻿id,text,label\r\n' + order.map(it => `${it.id},${esc(it.text)},`).join('\r\n') + '\r\n';
-  const file = path.join(__dirname, 'human', 'label-template.csv');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, csv);
-  console.log(`Wrote ${path.relative(process.cwd(), file)}: ${order.length} posts, label column empty.`);
-  console.log('Fill "label" with pos / neu / neg without looking at eval/headlines.json, save as e.g. eval/human/teammate.csv,');
-  console.log('then run: npm run eval -- --human eval/human/teammate.csv');
+  const shuffle = <T,>(xs: T[]) => xs.map((x, i) => ({ x, k: (i * 7919 + 17) % 1009 })).sort((p, q) => p.k - q.k).map(o => o.x);
+  const items: { id: string; text: string; part: number }[] =
+    shuffle(loadDataset('headlines').items).map(it => ({ id: it.id, text: it.text, part: 1 }));
+  try {
+    const finsen = loadDataset('finsen').items.slice(0, FINSEN_FOR_HUMANS);
+    items.push(...shuffle(finsen).map(it => ({ id: it.id, text: it.text, part: 2 })));
+  } catch {
+    console.warn('FinnSentiment not downloaded (npm run eval:data), so the tool only has part 1.');
+  }
+  const tpl = fs.readFileSync(path.join(__dirname, 'human', 'label-tool.template.html'), 'utf8');
+  const html = tpl.replace('/*__ITEMS__*/[]', JSON.stringify(items).replace(/</g, '\\u003c'));
+  const file = path.join(__dirname, 'human', 'label.html');
+  fs.writeFileSync(file, html);
+  console.log(`Wrote ${path.relative(process.cwd(), file)}: ${items.length} texts (${items.filter(i => i.part === 1).length} headlines + ${items.filter(i => i.part === 2).length} FinnSentiment).`);
+  console.log('Open it in a browser, label everything, download the CSV into eval/human/, then run:');
+  console.log('  npm run eval -- --dataset headlines,finsen --human eval/human/<name>.csv --out eval/results/human-agreement.md');
 }
 
 // ── One dataset ────────────────────────────────────────────────────────────────
@@ -302,7 +330,8 @@ interface MethodResult { method: string; prompt: string; preds: Pred[]; ms: numb
 
 async function benchmarkDataset(ds: Dataset) {
   const items = limit ? ds.items.slice(0, limit) : ds.items;
-  const modes: ('numbered' | 'array')[] = promptMode === 'both' ? ['numbered', 'array'] : [promptMode];
+  // Target datasets: the target prompt, plus the plain prompt to show what knowing the target adds
+  const modes: Mode[] = items.some(it => it.target) ? ['target', 'numbered'] : promptMode === 'both' ? ['numbered', 'array'] : [promptMode];
   process.stdout.write(`\n${ds.title}: ${items.length} items, ${models.length} model(s) × ${runs} run(s) `);
 
   const results: MethodResult[] = [];
@@ -310,16 +339,17 @@ async function benchmarkDataset(ds: Dataset) {
   const kw = items.map(it => toLabel[keywordSentiment({ title: it.text, content: it.text })]);
   results.push({ method: 'Keyword list (no AI)', prompt: '—', preds: kw, ms: 0, okRuns: 1, errors: [], isModel: false });
 
-  if (humanFile && ds.name === 'headlines') {
+  if (humanFile) {
     const h = readHumanCsv(humanFile);
-    results.push({ method: 'Teammate (human)', prompt: '—', preds: items.map(it => h.get(it.id) ?? null), ms: 0, okRuns: 1, errors: [], isModel: false });
+    const preds = items.map(it => h.get(it.id) ?? null);
+    if (preds.some(Boolean)) results.push({ method: HUMAN_LABEL, prompt: '—', preds, ms: 0, okRuns: 1, errors: [], isModel: false });
   }
 
   const haveKeys = Boolean(process.env.NVIDIA_API_KEY || process.env.GEMINI_API_KEY);
   const runnable = models.filter(m => m.startsWith('hf:') || haveKeys);
   if (runnable.length) {
     // Local classifiers have no prompt, so they run once whatever --prompt says
-    const jobs = runnable.flatMap(model => (model.startsWith('hf:') ? ['numbered' as const] : modes).map(mode => ({ model, mode })));
+    const jobs = runnable.flatMap(model => (model.startsWith('hf:') ? ['numbered' as Mode] : modes).map(mode => ({ model, mode })));
     const done = await Promise.all(jobs.map(async ({ model, mode }) => {
       const all = [];
       for (let r = 0; r < runs; r++) all.push(await runModel(model, items, mode));
@@ -388,18 +418,31 @@ function reportDataset({ ds, items, results }: Awaited<ReturnType<typeof benchma
     }
   }
 
-  // Teammate: the two humans, and each model against each human
-  const mate = results.find(r => r.method === 'Teammate (human)');
+  // Second human (--human): compared on the items they labelled
+  const mate = results.find(r => r.method === HUMAN_LABEL);
   if (mate) {
-    const ours = items.map(it => it.accept[0] as Pred);
-    lines.push(`\n**Two humans and the models**\n`);
-    lines.push('"Our labels" = first accepted label in eval/headlines.json. Kappa: 0 = chance, 1 = perfect agreement.\n');
+    const idx = items.map((_, i) => i).filter(i => mate.preds[i]);
+    const sub = idx.map(i => items[i]);
+    const pick = (xs: Pred[]) => idx.map(i => xs[i]);
+    const human = pick(mate.preds);
+    const ref = sub.map(it => it.accept[0] as Pred);
+    const hasAnn = sub.every(it => it.annotators?.length);
+    lines.push(`\n**A second human: ${humanName}** (${sub.length} items)\n`);
+    lines.push(`"Reference" = the dataset's label${ds.name === 'headlines' ? ' (ours; accuracy counts any accepted label, kappa uses the first)' : ''}. Kappa: 0 = chance, 1 = perfect agreement.\n`);
     lines.push('| Pair | Agreement | Cohen\'s kappa |');
     lines.push('|---|---|---|');
-    lines.push(`| Our labels vs teammate | ${pct(agreementRate(ours, mate.preds))} | ${num(kappa(ours, mate.preds))} |`);
+    lines.push(`| ${humanName} vs reference | ${pct(accuracy(sub, human))} | ${num(kappa(human, ref))} |`);
+    if (hasAnn) {
+      const nAnn = sub[0].annotators!.length;
+      const ann = Array.from({ length: nAnn }, (_, a) => sub.map(it => it.annotators![a] as Pred));
+      const pairs: number[][] = [];
+      for (let a = 0; a < nAnn; a++) for (let b = a + 1; b < nAnn; b++) pairs.push([a, b]);
+      lines.push(`| Original annotators vs each other | ${pct(mean(pairs.map(([a, b]) => agreementRate(ann[a], ann[b]))))} | ${num(mean(pairs.map(([a, b]) => kappa(ann[a], ann[b]))))} |`);
+      lines.push(`| ${humanName} vs original annotators | ${pct(mean(ann.map(a => agreementRate(human, a))))} | ${num(mean(ann.map(a => kappa(human, a))))} |`);
+    }
     for (const r of ok.filter(r => r.isModel)) {
-      lines.push(`| ${r.method} vs our labels | ${pct(agreementRate(r.preds, ours))} | ${num(kappa(r.preds, ours))} |`);
-      lines.push(`| ${r.method} vs teammate | ${pct(agreementRate(r.preds, mate.preds))} | ${num(kappa(r.preds, mate.preds))} |`);
+      const preds = pick(r.preds);
+      lines.push(`| ${r.method}${r.prompt !== '—' && r.prompt !== 'numbered' ? ` (${r.prompt})` : ''} vs ${humanName} | ${pct(agreementRate(preds, human))} | ${num(kappa(preds, human))} |`);
     }
   }
 
@@ -410,7 +453,7 @@ function reportDataset({ ds, items, results }: Awaited<ReturnType<typeof benchma
     const wrong = items.map((it, i) => ({ it, p: r.preds[i] })).filter(x => !isCorrect(x.it, x.p));
     lines.push(`\n${wrong.length} mistakes${wrong.length > 15 ? ' (first 15)' : ''}:\n`);
     for (const { it, p } of wrong.slice(0, 15)) {
-      lines.push(`- ${p ?? 'none'} (want ${it.accept.join('/')})${it.group ? ` [${it.group}]` : ''}: ${it.text.replace(/\s+/g, ' ').slice(0, 110)}`);
+      lines.push(`- ${p ?? 'none'} (want ${it.accept.join('/')})${it.group ? ` [${it.group}]` : ''}${it.target ? ` [target: ${it.target}]` : ''}: ${it.text.replace(/\s+/g, ' ').slice(0, 110)}`);
     }
     if (r.errors.length) lines.push(`\nErrors (${r.errors.length} batches): ${[...new Set(r.errors)].slice(0, 3).join('; ')}`);
   }
@@ -425,7 +468,7 @@ async function main() {
     console.error('No NVIDIA_API_KEY or GEMINI_API_KEY in .env — only the keyword baseline will run.');
   }
 
-  const names = datasetArg === 'all' ? ['headlines', 'fpb', 'tweeteval', 'finsen'] : datasetArg.split(',');
+  const names = datasetArg === 'all' ? ['headlines', 'fpb', 'tweeteval', 'finsen', 'newsmtsc'] : datasetArg.split(',');
   const sections: string[] = [];
   const raw: any[] = [];
   for (const name of names) {

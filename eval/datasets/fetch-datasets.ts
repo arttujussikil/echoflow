@@ -24,6 +24,8 @@ export interface DatasetItem {
   group?: string;
   /** Individual human annotations, when the dataset has them */
   annotators?: Label[];
+  /** Target-dependent datasets: the person/thing whose sentiment is labelled */
+  target?: string;
 }
 
 export interface Dataset {
@@ -191,9 +193,37 @@ async function finnSentiment(): Promise<Dataset> {
   };
 }
 
+// ── NewsMTSC ───────────────────────────────────────────────────────────────────
+// English news sentences about policy issues; the label is the sentiment TOWARD a
+// named person in the sentence, not the sentence's overall tone. Used to evaluate
+// the "Mood toward…" feature. "rw" = the real-world test split.
+async function newsMtsc(): Promise<Dataset> {
+  const url = 'https://raw.githubusercontent.com/fhamborg/NewsMTSC/main/NewsSentiment/controller_data/datasets/NewsMTSC-dataset/devtest_rw.jsonl';
+  const lines = (await download(url)).toString('utf8').split(/\r?\n/).filter(Boolean);
+  const map: Record<string, Label> = { '2': 'neg', '4': 'neu', '6': 'pos' };
+  const items: DatasetItem[] = [];
+  for (const line of lines) {
+    const row = JSON.parse(line);
+    // The primary target is the one the sentence was sampled for
+    const t = (row.targets ?? []).find((x: any) => x['Input.gid'] === row.primary_gid) ?? row.targets?.[0];
+    const label = map[String(Math.round(Number(t?.polarity)))];
+    if (!t || !label || !row.sentence_normalized) continue;
+    items.push({ id: `mtsc-${row.primary_gid}`, text: row.sentence_normalized, target: t.mention, accept: [label] });
+  }
+  return {
+    name: 'newsmtsc',
+    title: 'NewsMTSC (sentiment toward a target)',
+    description: 'English news sentences about policy issues, each labelled with the sentiment toward one named person in it (5 annotators). 100 per label from the real-world test split. Evaluates the "Mood toward…" feature.',
+    source: 'https://github.com/fhamborg/NewsMTSC',
+    license: 'Research use (texts are not redistributed here)',
+    citation: 'Hamborg, F., Donnay, K. (2021). NewsMTSC: A Dataset for (Multi-)Target-dependent Sentiment Classification in Political News Articles. EACL.',
+    items: sample('newsmtsc', items, it => it.accept[0], 100),
+  };
+}
+
 async function main() {
   fs.mkdirSync(DIR, { recursive: true });
-  for (const [name, load] of [['fpb', financialPhraseBank], ['tweeteval', tweetEval], ['finsen', finnSentiment]] as const) {
+  for (const [name, load] of [['fpb', financialPhraseBank], ['tweeteval', tweetEval], ['finsen', finnSentiment], ['newsmtsc', newsMtsc]] as const) {
     process.stdout.write(`${name}: downloading… `);
     try {
       const ds = await load();
