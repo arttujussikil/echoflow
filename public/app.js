@@ -200,17 +200,18 @@ async function runSearch(query, bundle) {
   history.replaceState(null, '', url);
 
   setBusy(true);
-  $('welcome').hidden = true;
-  $('dashboard').hidden = false;
+  showReport();
   $('feed').hidden = true;
   compare = null;
   $('compare').hidden = true;
   askLog = [];
   targetState = null;
   $('sourceBar').hidden = true;
-  $('stats').innerHTML = '';
-  $('topList').innerHTML = `<li class="loading"><span class="spinner"></span>Searching ${enabledSources().length} sources…</li>`;
-  $('aiBody').innerHTML = `<p class="ai-foot">The AI reads the results once they are in.</p>`;
+  $('leadTitle').textContent = query || `${FEED_BUNDLES[bundle]?.label} feeds`;
+  $('leadMeta').textContent = `Searching ${enabledSources().length} sources…`;
+  $('leadMood').innerHTML = `<div class="loading"><span class="spinner"></span>Collecting posts</div>`;
+  $('topList').innerHTML = '';
+  $('aiBody').innerHTML = `<p class="ai-foot">The AI reads the posts once they are in.</p>`;
   $('moodBadge').hidden = true;
 
   try {
@@ -241,10 +242,14 @@ async function runSearch(query, bundle) {
 
     loadStories(seq);
     if (current.results.length) await runAI(seq);
-    else $('aiBody').innerHTML = `<p class="ai-foot">Nothing to analyse — try other keywords or a longer time range in Settings.</p>`;
+    else {
+      $('leadMood').innerHTML = `<p class="lead__status">No posts found. Try other words, or a longer time range in the filters next to the search box.</p>`;
+      $('aiBody').innerHTML = `<p class="ai-foot">Nothing to read yet.</p>`;
+    }
   } catch (err) {
     if (seq !== searchSeq) return;
-    $('topList').innerHTML = `<li class="ai-error">${esc(err.message)}</li>`;
+    $('leadMeta').textContent = '';
+    $('leadMood').innerHTML = `<p class="ai-error">${esc(err.message)}</p>`;
     $('aiBody').innerHTML = '';
   } finally {
     if (seq === searchSeq) setBusy(false);
@@ -284,7 +289,9 @@ function aiPosts(posts) {
 async function runAI(seq = searchSeq) {
   if (!current?.results.length) return;
   const sample = aiPosts(current.results);
-  $('aiBody').innerHTML = `<div class="loading"><span class="spinner"></span>AI is reading ${sample.length} posts… (usually 10–30 s)</div>`;
+  const analysing = current;
+  analysing.aiReading = sample.length;
+  renderAI();
 
   try {
     const res = await fetch('/api/analytics/analyze', {
@@ -317,17 +324,25 @@ async function runAI(seq = searchSeq) {
   } catch (err) {
     if (seq !== searchSeq) return;
     current.analysisError = err.message;
+  } finally {
+    analysing.aiReading = 0;
   }
   renderAll();
+}
+
+/** Front page → report: the hero shrinks to a search bar and "How it works" goes away. */
+function showReport() {
+  document.body.classList.add('has-results');
+  $('welcome').hidden = true;
+  $('dashboard').hidden = false;
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────────
 function renderAll() {
   if (!current) return;
-  $('welcome').hidden = true;
-  $('dashboard').hidden = false;
+  showReport();
   renderSourceBar();
-  renderStats();
+  renderLeadHeader();
   renderTop();
   renderAI();
   renderAsk();
@@ -354,15 +369,14 @@ function renderSourceBar() {
     }).join('');
 }
 
-function renderStats() {
+/** "Finland" + "85 posts from 6 sources in the past week" at the top of the report. */
+function renderLeadHeader() {
   const r = current.results;
-  const withResults = new Set(r.map(p => p.platform)).size;
-  const engagement = r.reduce((s, p) => s + p._pop, 0);
-  $('stats').innerHTML = `
-    <div><b>${r.length}</b>results</div>
-    <div><b>${withResults}</b>sources</div>
-    ${engagement ? `<div><b>${compact(engagement)}</b>engagement</div>` : ''}
-    ${current.query ? `<div><b>${esc(current.query)}</b>search</div>` : ''}`;
+  const sources = new Set(r.map(p => p.platform)).size;
+  const range = TIME_OPTIONS.find(([v]) => v === settings.timeRange)?.[1].toLowerCase();
+  $('leadTitle').textContent = current.query || (current.bundle ? `${FEED_BUNDLES[current.bundle]?.label} feeds` : 'Imported posts');
+  $('leadMeta').textContent = !r.length ? 'No posts found'
+    : `${r.length} posts from ${sources} source${sources === 1 ? '' : 's'}${range && range !== 'any time' ? ` in the ${range}` : ''}`;
 }
 
 function sortPosts(posts, mode) {
@@ -387,17 +401,22 @@ function topPosts(posts, mode, n = 10, perSource = 3) {
 function renderTop() {
   const top = topPosts(current.results, topMode);
   if (!top.length) {
-    $('topList').innerHTML = `<li class="ai-foot" style="display:block">No results. Check the source chips above for errors, or widen the time range in Settings.</li>`;
+    $('topList').innerHTML = `<li class="ai-foot">No posts. Sources that failed are marked in red under the search box; hover one to see why.</li>`;
     return;
   }
   $('topList').innerHTML = top.map(p => `
     <li>
       <div>
         <a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
-        <div class="top-meta"><span class="dot dot--${p._sent}" title="${esc(moodTitle(p))}"></span>${esc(sourceLabel(p))} · ${timeAgo(p._time)}</div>
+        <div class="top-meta">${[esc(sourceLabel(p)), timeAgo(p._time), engagementLabel(p)].filter(Boolean).join(', ')}</div>
+        <div class="top-mood">${moodTag(p)}${p._reason ? `<span class="reason">${esc(p._reason)}</span>` : ''}</div>
       </div>
-      <span class="top-score">${engagementLabel(p)}</span>
     </li>`).join('');
+}
+
+/** The mood as a tinted word. Keyword guesses get an outline so they read as less certain. */
+function moodTag(p) {
+  return `<span class="mood-tag mood-tag--${p._sent}${p._ai ? '' : ' is-estimate'}" title="${esc(moodTitle(p))}">${p._sent}${p._ai ? '' : ' (guess)'}</span>`;
 }
 
 /** "nvidia:nvidia/nemotron-3-super…" → "NVIDIA NIM · nemotron-3-super…" */
@@ -421,55 +440,79 @@ function moodCounts() {
   };
 }
 
+/**
+ * The AI result is split in two: the lead card gets the answer (one sentence, the
+ * mood bar, clickable percentages) and the summary card gets the AI's writing.
+ */
 function renderAI() {
   const a = current.analysis;
   const badge = $('moodBadge');
+  const skeleton = `<div class="skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span></div>`;
+  badge.hidden = !a;
 
-  if (!a && !current.analysisError) {
-    // Imported data without analysis, or still waiting
-    if (!$('aiBody').querySelector('.loading')) {
-      $('aiBody').innerHTML = `${moodBlock(moodCounts(), 'Mood by keywords (estimate)')}
-        <button id="runAiBtn" class="ghost-btn" type="button">Analyse with AI</button>`;
-      $('runAiBtn').onclick = () => runAI();
-      wireLegend();
-    }
-    badge.hidden = true;
-    return;
-  }
-
-  if (!a) {
-    $('aiBody').innerHTML = `
-      <p class="ai-error">AI unavailable: ${esc(current.analysisError)}</p>
-      ${moodBlock(moodCounts(), 'Mood by keywords (estimate)')}
-      <button id="runAiBtn" class="ghost-btn" type="button">Try again</button>`;
-    $('runAiBtn').onclick = () => runAI();
-    badge.hidden = true;
+  if (current.aiReading) {
+    $('leadMood').innerHTML = `
+      <p class="lead__verdict">The AI is reading ${current.aiReading} posts…</p>
+      ${moodBlock(moodCounts(), { estimate: true })}
+      <p class="lead__status">Until it's done, the bar is a rough guess from keywords. This usually takes 10 to 30 seconds; the posts below are ready to read now.</p>`;
+    $('aiBody').innerHTML = `${skeleton}<p class="ai-foot">The summary appears once the AI has read the posts.</p>`;
     wireLegend();
     return;
   }
 
-  badge.hidden = false;
+  if (!a) {
+    // Imported data without an analysis, or the AI failed
+    $('leadMood').innerHTML = `
+      ${moodBlock(moodCounts(), { estimate: true })}
+      <p class="lead__status">This is a rough guess from keywords, not the AI's reading.</p>`;
+    $('aiBody').innerHTML = `
+      ${current.analysisError ? `<p class="ai-error">The AI couldn't read the posts: ${esc(current.analysisError)}</p>` : '<p class="ai-foot">These posts haven\'t been read by the AI.</p>'}
+      <button id="runAiBtn" class="btn btn--quiet" type="button">${current.analysisError ? 'Try again' : 'Let the AI read them'}</button>`;
+    $('runAiBtn').onclick = () => runAI();
+    wireLegend();
+    return;
+  }
+
   badge.textContent = a.mood;
   badge.className = `mood mood--${a.mood}`;
+  const verdict = moodVerdict(a.sentiment, a.mood);
+  $('leadMood').innerHTML = `
+    ${verdict ? `<p class="lead__verdict">${esc(verdict)}</p>` : ''}
+    ${moodBlock(a.sentiment)}`;
 
+  const unlabelled = current.results.length - (a.labelledCount ?? 0);
+  const offline = a.labelProvider?.startsWith('local:');
+  const credit = offline
+    ? `The cloud AI didn't answer, so an offline model (${esc(providerName(a.labelProvider).split(' · ')[1])}) labelled the moods. It gives labels but no reasons.`
+    : `The AI read ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` (${esc(PROVIDER_LABEL(a))})` : ''}.`;
   $('aiBody').innerHTML = `
-    ${moodBlock(a.sentiment, 'Mood')}
-    ${a.summary ? `<div class="ai-block"><h3>Summary</h3><p>${esc(a.summary)}</p></div>` : ''}
-    ${a.opinion ? `<div class="ai-block"><h3>AI's opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
+    ${a.summary ? `<p class="ai-summary">${esc(a.summary)}</p>`
+      : `<p class="ai-summary muted">No written summary this time: that needs a cloud AI. Add a free <code>NVIDIA_API_KEY</code> on the server to get one.</p>`}
+    ${a.opinion ? `<aside class="take"><h3>The AI's take</h3><p>${esc(a.opinion)}</p></aside>` : ''}
     ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
-    ${a.insights?.length ? `<div class="ai-block"><h3>Insights</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
-    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}
-      ${a.labelProvider?.startsWith('local:') ? `<br>The cloud AI didn't answer, so the moods come from the <b>offline model</b> (${esc(providerName(a.labelProvider).split(' · ')[1])}), which gives labels but no reasons.` : ''}</p>
+    ${a.insights?.length ? `<div class="ai-block"><h3>Worth noticing</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
+    <p class="ai-foot">${credit}${unlabelled > 0 ? ` The other ${unlabelled} posts are marked "guess": their mood comes from keywords.` : ''}</p>
     ${compareButton()}`;
   wireLegend();
   wireCompareButton();
+}
+
+/**
+ * One plain sentence for the top of the report, e.g. "Mostly neutral, with a negative streak."
+ * s:    { positive, neutral, negative } as whole percentages that add up to 100
+ * mood: the AI's one-word mood ("critical", "excited", "mixed", …); may be undefined
+ * Return '' to show no sentence.
+ */
+function moodVerdict(s, mood) {
+  // TODO(human)
+  return '';
 }
 
 function compareButton() {
   const ready = aiStatus?.nvidia && aiStatus?.gemini;
   const hint = ready ? 'Run both models on the same posts and show them side by side'
     : 'Needs both NVIDIA_API_KEY and GEMINI_API_KEY in .env';
-  return `<button id="compareBtn" class="ghost-btn" type="button" title="${esc(hint)}" ${ready ? '' : 'disabled'}>⇄ Compare NVIDIA vs Gemini</button>
+  return `<button id="compareBtn" class="btn btn--quiet" type="button" title="${esc(hint)}" ${ready ? '' : 'disabled'}>Compare NVIDIA and Gemini</button>
     ${ready ? '' : `<p class="ai-foot">Add a free <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Gemini key</a> as <code>GEMINI_API_KEY</code> in .env to compare models.</p>`}`;
 }
 
@@ -478,23 +521,22 @@ function wireCompareButton() {
   if (btn) btn.onclick = runCompare;
 }
 
-function moodBlock(s, title) {
-  const rows = [['positive', 'pos', 'Positive'], ['neutral', 'neu', 'Neutral'], ['negative', 'neg', 'Negative']];
+/** Big mood bar plus one button per mood; a button filters the post list to that mood. */
+function moodBlock(s, { estimate = false } = {}) {
+  const rows = [['positive', 'pos', 'positive'], ['neutral', 'neu', 'neutral'], ['negative', 'neg', 'negative']];
   return `
-    <div class="ai-block">
-      <h3>${esc(title)}</h3>
-      <div class="moodbar" role="img" aria-label="Positive ${s.positive}%, neutral ${s.neutral}%, negative ${s.negative}%">
-        ${rows.map(([k, c]) => `<span class="${c}" style="width:${s[k]}%"></span>`).join('')}
-      </div>
-      <div class="legend">
-        ${rows.map(([k, , label]) => `<button type="button" data-sent="${k}" class="${feedFilter.sent === k ? 'is-on' : ''}" title="Show only ${label.toLowerCase()} posts">
-          <span class="dot dot--${k}"></span>${label} <b>${s[k]}%</b></button>`).join('')}
-      </div>
+    <div class="moodbar${estimate ? ' is-estimate' : ''}" role="img" aria-label="${estimate ? 'Keyword estimate: ' : ''}positive ${s.positive}%, neutral ${s.neutral}%, negative ${s.negative}%">
+      ${rows.map(([k, c]) => `<span class="${c}" style="width:${s[k]}%"></span>`).join('')}
+    </div>
+    <div class="legend">
+      ${rows.map(([k, , label]) => `<button type="button" data-sent="${k}" class="${feedFilter.sent === k ? 'is-on' : ''}" aria-pressed="${feedFilter.sent === k}">
+        <b>${s[k]}%</b> ${label}</button>`).join('')}
+      <span class="legend__hint">Click a mood to see those posts</span>
     </div>`;
 }
 
 function wireLegend() {
-  $('aiBody').querySelectorAll('.legend button').forEach(btn => {
+  $('leadMood').querySelectorAll('.legend button').forEach(btn => {
     btn.onclick = () => {
       setSentFilter(feedFilter.sent === btn.dataset.sent ? '' : btn.dataset.sent);
       $('feed').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -541,17 +583,18 @@ function renderFeed() {
     const showSnippet = snippet && snippet !== p.title && !p.title.startsWith(snippet.slice(0, 60));
     const kws = p.metadata?.keywords || (p.metadata?.keyword ? [p.metadata.keyword] : []);
     return `
-      <li class="item item--${p._sent}">
+      <li class="item">
         <a class="item__title" href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+        ${showSnippet ? `<p class="item__snippet">${esc(snippet.slice(0, 240))}${snippet.length > 240 ? '…' : ''}</p>` : ''}
         <div class="item__meta">
+          ${moodTag(p)}
+          ${p._reason ? `<span class="reason">${esc(p._reason)}</span>` : ''}
           <span class="item__src">${esc(sourceLabel(p))}</span>
           <span>${timeAgo(p._time)}</span>
           ${engagementLabel(p) ? `<span>${engagementLabel(p)}</span>` : ''}
           ${p.author && p.author !== 'unknown' ? `<span>by ${esc(p.author)}</span>` : ''}
           ${multiKeyword ? kws.map(k => `<span class="tag">${esc(k)}</span>`).join('') : ''}
-          <span class="item__mood" title="${esc(moodTitle(p))}"><span class="dot dot--${p._sent}"></span>${p._sent}${p._ai ? '' : '*'}${p._reason ? `<span class="item__reason"> — ${esc(p._reason)}</span>` : ''}</span>
         </div>
-        ${showSnippet ? `<p class="item__snippet">${esc(snippet.slice(0, 240))}${snippet.length > 240 ? '…' : ''}</p>` : ''}
       </li>`;
   }).join('') || `<li class="ai-foot">No posts match these filters.</li>`;
 
@@ -644,9 +687,9 @@ function sourceLabel(p) {
 function engagementLabel(p) {
   const e = p.engagement || {};
   const parts = [];
-  if (e.score) parts.push(`↑ ${compact(e.score)}`);
-  if (e.comments) parts.push(`💬 ${compact(e.comments)}`);
-  return parts.join('  ');
+  if (e.score) parts.push(`${compact(e.score)} points`);
+  if (e.comments) parts.push(`${compact(e.comments)} comments`);
+  return parts.join(', ');
 }
 
 // ── Ask the results ────────────────────────────────────────────────────────────
@@ -1215,7 +1258,7 @@ function renderSourceSettings() {
         ${k.configured ? '' : `
           <div class="source-key">
             <input type="password" data-key="${p.id}" placeholder="${saved ? '•••••• saved (paste to replace, clear to remove)' : 'Paste API key'}" autocomplete="off" aria-label="${esc(p.displayName)} API key" />
-            <a class="ghost-btn" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
+            <a class="btn btn--quiet" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
           </div>`}
       </div>`;
   }).join('');
@@ -1338,7 +1381,7 @@ function compareColumn(p, r = { state: 'loading' }) {
       </div>
       <p class="cmp-pcts"><span class="dot dot--positive"></span>${s.positive}% <span class="dot dot--neutral"></span>${s.neutral}% <span class="dot dot--negative"></span>${s.negative}%</p>
       ${a.summary ? `<div class="ai-block"><h3>Summary</h3><p>${esc(a.summary)}</p></div>` : ''}
-      ${a.opinion ? `<div class="ai-block"><h3>Opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
+      ${a.opinion ? `<aside class="take"><h3>Its take</h3><p>${esc(a.opinion)}</p></aside>` : ''}
       ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
     </div>`;
 }
@@ -1360,7 +1403,7 @@ function compareAgreement() {
   });
   diffs.sort((x, y) => Number(y.isOpposite) - Number(x.isOpposite));
   const pct = both ? Math.round((100 * same) / both) : 0;
-  const cell = (l, r) => `<span class="dot dot--${SENT_NAME[l]}"></span>${SENT_NAME[l]}${r ? `<span class="item__reason"> — ${esc(r)}</span>` : ''}`;
+  const cell = (l, r) => `<span class="dot dot--${SENT_NAME[l]}"></span>${SENT_NAME[l]}${r ? `<br><span class="reason">${esc(r)}</span>` : ''}`;
 
   return `
     <div class="agree">
@@ -1515,7 +1558,7 @@ function timeAgo(t) {
 
 function setBusy(busy) {
   $('searchBtn').disabled = busy;
-  $('searchBtn').textContent = busy ? 'Searching…' : 'Search';
+  $('searchBtn').textContent = busy ? 'Searching…' : 'Read the mood';
 }
 
 let toastTimer;
