@@ -31,8 +31,8 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+/* Dark mode is a choice in Settings (data-theme on <html>), not the system setting */
+:root[data-theme="dark"] {
     --paper: #131518;
     --surface: #1B1E22;
     --tint: #24282D;
@@ -53,7 +53,6 @@
     --neg-soft: #3A2519;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.25);
     color-scheme: dark;
-  }
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */

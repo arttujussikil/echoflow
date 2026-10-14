@@ -72,6 +72,7 @@ const DEFAULT_SETTINGS = {
   disabledSources: [],  // default-on sources the user switched off
   optIn: [],            // default-off sources (single Finnish papers) the user switched on
   aiLanguage: 'en',     // language the AI writes in: 'en' | 'fi'
+  theme: 'light',       // 'light' | 'dark'; light by default, whatever the system uses
   apiKeys: {},
   quick: DEFAULT_QUICK,
 };
@@ -1600,6 +1601,23 @@ $('closeSettings').addEventListener('click', () => openSettings(false));
 $('scrim').addEventListener('click', () => openSettings(false));
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { openSettings(false); openFilters(false); }
+});
+
+// Theme: the <head> script already applied the saved choice before first paint
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll('[data-theme-choice]').forEach(b => {
+    b.classList.toggle('is-on', b.dataset.themeChoice === theme);
+    b.setAttribute('aria-checked', String(b.dataset.themeChoice === theme));
+  });
+}
+applyTheme(settings.theme === 'dark' ? 'dark' : 'light');
+$('themeChoice').addEventListener('click', e => {
+  const b = e.target.closest('[data-theme-choice]');
+  if (!b) return;
+  settings.theme = b.dataset.themeChoice;
+  saveSettings();
+  applyTheme(settings.theme);
 });
 
 $('aiLanguage').value = settings.aiLanguage || 'en';
