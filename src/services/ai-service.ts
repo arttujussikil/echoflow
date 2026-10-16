@@ -57,6 +57,16 @@ const GEMINI_API_KEY = envSecret('GEMINI_API_KEY');
 const GEMINI_MODELS = csv(process.env.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.5-flash');
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
+/**
+ * Bring your own model: any OpenAI-compatible chat-completions API, e.g. OpenRouter,
+ * Groq, LM Studio or llama.cpp's server. The key is optional (local servers need none).
+ */
+const CUSTOM_AI_URL = (process.env.CUSTOM_AI_URL || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
+const CUSTOM_AI_KEY = envSecret('CUSTOM_AI_KEY');
+const CUSTOM_AI_MODELS = csv(process.env.CUSTOM_AI_MODEL || '');
+const CUSTOM_AI_NAME = (process.env.CUSTOM_AI_NAME || 'Custom model').trim();
+const CUSTOM_AI_ON = Boolean(CUSTOM_AI_URL && CUSTOM_AI_MODELS.length);
+
 /** Posts per labelling request — small enough that models don't lose count. */
 const LABEL_BATCH = 40;
 /** Upper bound on posts labelled per analysis */
@@ -70,14 +80,25 @@ function csv(s: string): string[] {
 
 // ── Providers ──────────────────────────────────────────────────────────────────
 /** Cloud providers can be compared side by side; Ollama is only a last-resort fallback. */
-export type ProviderId = 'nvidia' | 'gemini' | 'ollama';
+export type ProviderId = 'nvidia' | 'gemini' | 'custom' | 'ollama';
+/** What the user can pin the mood report to: one LLM provider, or the offline classifier (labels only). */
+export type AIChoice = ProviderId | 'local';
 
 interface ModelRef { provider: ProviderId; model: string }
 
 export function providerConfigured(p: ProviderId): boolean {
   if (p === 'nvidia') return Boolean(NVIDIA_API_KEY);
   if (p === 'gemini') return Boolean(GEMINI_API_KEY);
+  if (p === 'custom') return CUSTOM_AI_ON;
   return true;
+}
+
+/** What to add to .env to set a provider up, for error messages. */
+export function providerSetupHint(p: ProviderId): string {
+  if (p === 'nvidia') return 'NVIDIA is not set up — add NVIDIA_API_KEY to .env and restart';
+  if (p === 'gemini') return 'Gemini is not set up — add GEMINI_API_KEY to .env and restart';
+  if (p === 'custom') return 'No custom model is set up — add CUSTOM_AI_URL and CUSTOM_AI_MODEL to .env and restart';
+  return `${p} is not set up`;
 }
 
 /**
@@ -87,12 +108,15 @@ export function providerConfigured(p: ProviderId): boolean {
 function modelChain(only?: ProviderId | 'cloud'): ModelRef[] {
   const nvidia = NVIDIA_API_KEY ? NVIDIA_MODELS.map(model => ({ provider: 'nvidia' as const, model })) : [];
   const gemini = GEMINI_API_KEY ? GEMINI_MODELS.map(model => ({ provider: 'gemini' as const, model })) : [];
+  const custom = CUSTOM_AI_ON ? CUSTOM_AI_MODELS.map(model => ({ provider: 'custom' as const, model })) : [];
   const ollama = [{ provider: 'ollama' as const, model: OLLAMA_MODEL }];
   if (only === 'nvidia') return nvidia;
   if (only === 'gemini') return gemini;
+  if (only === 'custom') return custom;
   if (only === 'ollama') return ollama;
-  if (only === 'cloud') return [...nvidia, ...gemini];
-  return [...nvidia, ...gemini, ...ollama];
+  // 'cloud' = the LLMs tried before the offline classifier (a custom model may run locally, but it's still an LLM)
+  if (only === 'cloud') return [...nvidia, ...gemini, ...custom];
+  return [...nvidia, ...gemini, ...custom, ...ollama];
 }
 
 // ── LLM plumbing ───────────────────────────────────────────────────────────────
@@ -110,15 +134,18 @@ function extractJSON(raw: string): any {
 
 const JSON_SYSTEM = 'You are a JSON-only response API. Always respond with valid JSON and absolutely nothing else. No markdown, no code blocks, no explanations.';
 
-/** NVIDIA NIM and Gemini both speak the OpenAI chat-completions format. */
+/** NVIDIA NIM, Gemini and the custom model all speak the OpenAI chat-completions format. */
 async function openAICompatibleJSON(ref: ModelRef, prompt: string, maxTokens: number): Promise<any> {
   const { provider, model } = ref;
-  const base = provider === 'gemini' ? GEMINI_BASE : NVIDIA_BASE;
-  const key = provider === 'gemini' ? GEMINI_API_KEY : NVIDIA_API_KEY;
-  if (!key) throw new Error(`${provider.toUpperCase()} API key is not set`);
+  const base = provider === 'gemini' ? GEMINI_BASE : provider === 'custom' ? CUSTOM_AI_URL : NVIDIA_BASE;
+  const key = provider === 'gemini' ? GEMINI_API_KEY : provider === 'custom' ? CUSTOM_AI_KEY : NVIDIA_API_KEY;
+  if (!key && provider !== 'custom') throw new Error(`${provider.toUpperCase()} API key is not set`);
+  if (!base) throw new Error('CUSTOM_AI_URL is not set');
 
+  // Unknown servers get only the standard fields: not every one accepts response_format
   const extra =
-    provider === 'gemini'
+    provider === 'custom' ? {}
+    : provider === 'gemini'
       ? {
           response_format: { type: 'json_object' },
           // Gemini 3 can't switch thinking off; "low" keeps it short. 2.5 Flash accepts "none".
@@ -144,7 +171,7 @@ async function openAICompatibleJSON(ref: ModelRef, prompt: string, maxTokens: nu
       ...extra,
     },
     {
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' },
       timeout: 90_000,
     }
   );
@@ -192,10 +219,11 @@ function callModel(ref: ModelRef, prompt: string, maxTokens: number): Promise<an
 
 /**
  * One model call that must return JSON. `spec` is "gemini-3.8-flash", "gemini:<model>",
- * "nvidia:<model>" or a bare NVIDIA model id. Exported for eval/sentiment-benchmark.ts.
+ * "nvidia:<model>", "custom:<model>" (the CUSTOM_AI_URL server) or a bare NVIDIA model id.
+ * Exported for eval/sentiment-benchmark.ts.
  */
 export function modelJSON(spec: string, prompt: string, maxTokens: number): Promise<any> {
-  const m = spec.match(/^(nvidia|gemini|ollama):(.+)$/);
+  const m = spec.match(/^(nvidia|gemini|custom|ollama):(.+)$/);
   const ref: ModelRef = m
     ? { provider: m[1] as ProviderId, model: m[2] }
     : { provider: spec.startsWith('gemini') ? 'gemini' : 'nvidia', model: spec };
@@ -297,11 +325,20 @@ export function readLabels(parsed: any, count: number): LabelResult {
  * Hugging Face classifier (labels only), then Ollama as a last resort.
  * With `only` (side-by-side comparison) there is no fallback at all.
  */
-async function labelBatch(posts: Post[], language: AILanguage, only?: ProviderId): Promise<LabelResult & { provider: string }> {
+async function labelLocalBatch(posts: Post[], task: string, cloudError?: any): Promise<LabelResult & { provider: string }> {
+  const t = Date.now();
+  const texts = posts.map(p => `${p.title ?? ''}${p.content && p.content !== p.title ? ` — ${p.content.slice(0, 300)}` : ''}`);
+  const labels = await labelLocally(texts);
+  logger.info(`${task}: local ${localSentimentName()} answered in ${Date.now() - t} ms${cloudError ? ` (cloud failed: ${cloudError.message})` : ''}`);
+  return { labels, reasons: posts.map(() => null), provider: `local:${localSentimentName()}` };
+}
+
+async function labelBatch(posts: Post[], language: AILanguage, only?: AIChoice): Promise<LabelResult & { provider: string }> {
   // Reject answers that cover less than 80% of the batch so the next model gets a go
   const enough = (parsed: any) => readLabels(parsed, posts.length).labels.filter(Boolean).length >= posts.length * 0.8;
   const prompt = buildLabelPrompt(posts, language);
   const task = `label ${posts.length} posts`;
+  if (only === 'local') return labelLocalBatch(posts, task);
   // A short reason per post makes the answer ~1-2k tokens for a batch of 40
   if (only) {
     const { parsed, provider } = await askJSON(prompt, task, 3000, enough, only);
@@ -319,11 +356,7 @@ async function labelBatch(posts: Post[], language: AILanguage, only?: ProviderId
   }
   if (localSentimentEnabled()) {
     try {
-      const t = Date.now();
-      const texts = posts.map(p => `${p.title ?? ''}${p.content && p.content !== p.title ? ` — ${p.content.slice(0, 300)}` : ''}`);
-      const labels = await labelLocally(texts);
-      logger.info(`${task}: local ${localSentimentName()} answered in ${Date.now() - t} ms${cloudError ? ` (cloud failed: ${cloudError.message})` : ''}`);
-      return { labels, reasons: posts.map(() => null), provider: `local:${localSentimentName()}` };
+      return await labelLocalBatch(posts, task, cloudError);
     } catch (err: any) {
       logger.warn(`${task}: local model failed: ${err.message}`);
     }
@@ -332,7 +365,7 @@ async function labelBatch(posts: Post[], language: AILanguage, only?: ProviderId
   return { ...readLabels(parsed, posts.length), provider };
 }
 
-export async function labelSentiment(posts: Post[], language: AILanguage = 'en', only?: ProviderId): Promise<LabelResult & { provider?: string }> {
+export async function labelSentiment(posts: Post[], language: AILanguage = 'en', only?: AIChoice): Promise<LabelResult & { provider?: string }> {
   const batches: Post[][] = [];
   for (let i = 0; i < Math.min(posts.length, MAX_LABELLED); i += LABEL_BATCH) {
     batches.push(posts.slice(i, Math.min(i + LABEL_BATCH, MAX_LABELLED)));
@@ -398,6 +431,13 @@ function percentages(pos: number, neu: number, neg: number): AIAnalysis['sentime
   return { positive: p, neutral: 100 - p - n, negative: n };
 }
 
+/** A mood word from the label shares, for when no summary (and so no AI-chosen mood) came back. */
+function moodFromShares(s: AIAnalysis['sentiment']): string {
+  if (s.positive >= 25 && s.negative >= 25) return 'mixed';
+  const top = (['positive', 'neutral', 'negative'] as const).reduce((a, b) => (s[b] > s[a] ? b : a));
+  return top;
+}
+
 function strings(v: any, max: number): string[] {
   return Array.isArray(v) ? v.filter((x: any) => typeof x === 'string' && x.trim()).slice(0, max) : [];
 }
@@ -410,13 +450,16 @@ function strings(v: any, max: number): string[] {
  * The sentiment bar is computed from the labels so it always matches the coloured list.
  */
 /**
- * @param only  restrict to one provider with no fallback (used by the side-by-side comparison)
+ * @param only  restrict to one provider with no fallback (the model switch and the side-by-side
+ *              comparison). 'local' = the offline classifier: mood labels only, no summary.
  */
-export async function analyzeWithAI(posts: Post[], keyword?: string, language: AILanguage = 'en', only?: ProviderId): Promise<AIAnalysis> {
+export async function analyzeWithAI(posts: Post[], keyword?: string, language: AILanguage = 'en', only?: AIChoice): Promise<AIAnalysis> {
   const started = Date.now();
-  logger.info(`AI analysis of ${posts.length} posts${keyword ? ` about "${keyword}"` : ''}`);
+  logger.info(`AI analysis of ${posts.length} posts${keyword ? ` about "${keyword}"` : ''}${only ? ` (${only} only)` : ''}`);
   const [summaryRes, labelRes] = await Promise.allSettled([
-    askJSON(buildSummaryPrompt(posts, keyword, language), 'summary', 2048, p => typeof p?.summary === 'string', only),
+    only === 'local'
+      ? Promise.reject(new Error('The offline model labels moods but writes no summary'))
+      : askJSON(buildSummaryPrompt(posts, keyword, language), 'summary', 2048, p => typeof p?.summary === 'string', only),
     labelSentiment(posts, language, only),
   ]);
 
@@ -450,7 +493,7 @@ export async function analyzeWithAI(posts: Post[], keyword?: string, language: A
     themes: strings(summary.themes, 8),
     summary: typeof summary.summary === 'string' ? summary.summary : '',
     opinion: typeof summary.opinion === 'string' ? summary.opinion : '',
-    mood: VALID_MOODS.has(summary.mood) ? summary.mood : 'mixed',
+    mood: VALID_MOODS.has(summary.mood) ? summary.mood : moodFromShares(sentiment),
     insights: strings(summary.insights, 4),
     postCount: posts.length,
     analyzedAt: new Date().toISOString(),
@@ -651,6 +694,10 @@ export interface AIStatus {
   gemini: boolean;
   geminiModel: string;
   geminiModels: string[];
+  /** Bring-your-own OpenAI-compatible model (CUSTOM_AI_*); the URL and key are never sent */
+  custom: boolean;
+  customName: string;
+  customModel: string;
   /** Offline Hugging Face classifier used for mood labels when the cloud fails */
   localModel: string | null;
 }
@@ -660,6 +707,7 @@ export async function checkOllamaStatus(): Promise<AIStatus> {
     model: OLLAMA_MODEL, host: OLLAMA_HOST,
     nvidia: Boolean(NVIDIA_API_KEY), nvidiaModel: NVIDIA_MODELS[0] ?? '', nvidiaModels: NVIDIA_MODELS,
     gemini: Boolean(GEMINI_API_KEY), geminiModel: GEMINI_MODELS[0] ?? '', geminiModels: GEMINI_MODELS,
+    custom: CUSTOM_AI_ON, customName: CUSTOM_AI_NAME, customModel: CUSTOM_AI_MODELS[0] ?? '',
     localModel: localSentimentEnabled() ? localSentimentName() : null,
   };
   try {

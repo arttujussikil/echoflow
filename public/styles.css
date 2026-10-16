@@ -314,7 +314,9 @@ code { font-size: 0.9em; background: var(--tint); padding: 1px 5px; border-radiu
 .ai-block h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
 .ai-block p { margin: 0; }
 .themes { display: flex; flex-wrap: wrap; gap: 6px; }
-.theme { font-size: 14px; padding: 4px 12px; border-radius: 8px; background: var(--tint); }
+.theme { font-size: 14px; padding: 4px 12px; border-radius: 8px; background: var(--tint); border: 1px solid transparent; color: var(--ink); cursor: pointer; text-align: left; }
+.theme:hover, .theme:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
+.ai-block h3 .muted { font-weight: 400; }
 .insights { margin: 0; padding-left: 20px; }
 .insights li { margin-bottom: 4px; }
 .ai-foot { font-size: 13px; color: var(--muted); }
@@ -443,7 +445,7 @@ code { font-size: 0.9em; background: var(--tint); padding: 1px 5px; border-radiu
 .story__posts .muted { font-size: 13px; }
 
 /* Model comparison */
-.compare__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.compare__cols { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 20px; }
 .cmp-col { min-width: 0; border-radius: 12px; padding: 18px; background: var(--tint); }
 .cmp-col > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 17px; }
 .cmp-col .mood { margin-left: auto; }
@@ -464,6 +466,14 @@ code { font-size: 0.9em; background: var(--tint); padding: 1px 5px; border-radiu
 .diff tr.is-opposite td:first-child { font-weight: 600; }
 
 /* All posts */
+.feed__sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.feed__sources .src-chip .muted { font-size: 12px; font-variant-numeric: tabular-nums; }
+.feed__sources .src-chip.is-on .muted { color: var(--accent); }
+.feed__sources .src-more {
+  min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 14px; cursor: pointer;
+}
+.feed__sources .src-more.is-on { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
 .feed__filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
 .feed__filters .chip { background: transparent; border-radius: 7px; }
 .feed__filters .chip.is-on { background: var(--surface); }

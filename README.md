@@ -205,6 +205,8 @@ npm start      # run compiled output
 | `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b` | NVIDIA NIM model IDs, comma-separated, tried in order |
 | `GEMINI_API_KEY` | — | Free [Google AI Studio](https://aistudio.google.com/apikey) key. Adds Gemini as a backup provider and enables the side-by-side model comparison |
 | `GEMINI_MODEL` | `gemini-3.8-flash,gemini-3.5-flash` | Gemini model IDs, comma-separated, tried in order |
+| `CUSTOM_AI_URL` / `CUSTOM_AI_MODEL` | — | Your own model: any OpenAI-compatible API (OpenRouter, Groq, LM Studio, llama.cpp…), e.g. `https://openrouter.ai/api/v1`. Tried after Gemini, selectable in Settings → AI, included in the model comparison and in `npm run eval` |
+| `CUSTOM_AI_KEY` / `CUSTOM_AI_NAME` | — / `Custom model` | Its API key (empty for local servers) and the name shown in the UI |
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama service URL (local fallback) |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Local Ollama model (last resort for the summary) |
 | `LOCAL_SENTIMENT_MODEL` | `onnx-community/twitter-xlm-roberta-base-sentiment-ONNX@q8` | Offline Hugging Face classifier that labels moods when the cloud AI doesn't answer. `off` disables it |

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { logger } from '../../utils/logger';
-import { analyzeWithAI, answerFromPosts, labelTowardTargets, checkOllamaStatus, providerConfigured, ProviderId } from '../../services/ai-service';
+import { analyzeWithAI, answerFromPosts, labelTowardTargets, checkOllamaStatus, providerConfigured, providerSetupHint, AIChoice } from '../../services/ai-service';
+import { localSentimentEnabled } from '../../services/local-sentiment';
 import { embed, cosine, clusterVectors, embeddingsEnabled, embeddingModelName } from '../../services/embeddings';
 import { saveSnapshot } from '../../db/history';
 
@@ -9,7 +10,8 @@ export const analyticsRouter = Router();
 /**
  * POST /api/analytics/analyze — run AI analysis on an array of posts.
  * With `topic` (the search text), the resulting mood is also saved to the mood
- * history so the UI can chart it over time. Comparison runs (`provider`) aren't saved.
+ * history so the UI can chart it over time, with the model that produced it.
+ * Comparison runs send no `topic`, so they aren't saved.
  */
 analyticsRouter.post('/analyze', async (req: Request, res: Response) => {
   try {
@@ -20,14 +22,17 @@ analyticsRouter.post('/analyze', async (req: Request, res: Response) => {
     }
 
     logger.info(`AI analyze request: ${posts.length} posts${keyword ? ` keyword="${keyword}"` : ''}`);
-    // Optional: pin the analysis to one provider (side-by-side comparison in the UI)
-    const only: ProviderId | undefined = ['nvidia', 'gemini'].includes(provider) ? provider : undefined;
-    if (only && !providerConfigured(only)) {
-      return res.status(400).json({ error: `${only === 'gemini' ? 'Gemini' : 'NVIDIA'} is not set up — add ${only === 'gemini' ? 'GEMINI_API_KEY' : 'NVIDIA_API_KEY'} to .env and restart` });
+    // Optional: pin the analysis to one model (the model switch in Settings, and the side-by-side comparison)
+    const only: AIChoice | undefined = ['nvidia', 'gemini', 'custom', 'local'].includes(provider) ? provider : undefined;
+    if (only === 'local' && !localSentimentEnabled()) {
+      return res.status(400).json({ error: 'The offline model is switched off on this server (LOCAL_SENTIMENT_MODEL)' });
+    }
+    if (only && only !== 'local' && !providerConfigured(only)) {
+      return res.status(400).json({ error: providerSetupHint(only) });
     }
 
     const analysis = await analyzeWithAI(posts, keyword, language === 'fi' ? 'fi' : 'en', only);
-    if (topic && !only && analysis.labelledCount > 0) {
+    if (topic && analysis.labelledCount > 0) {
       const sources: Record<string, number> = {};
       for (const p of posts) sources[p.platform ?? 'unknown'] = (sources[p.platform ?? 'unknown'] ?? 0) + 1;
       // Fire and forget: a missing database must not slow down or fail the analysis

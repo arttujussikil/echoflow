@@ -123,8 +123,8 @@
             <header class="panel__head">
               <h2 id="bySourceTitle" class="panel__title">Mood by source</h2>
               <div class="seg" role="tablist" aria-label="Group sources by">
-                <button type="button" role="tab" class="seg__btn is-on" data-by="platform" aria-selected="true">Platform</button>
-                <button type="button" role="tab" class="seg__btn" data-by="outlet" aria-selected="false">Outlet</button>
+                <button type="button" role="tab" class="seg__btn is-on" data-by="outlet" aria-selected="true">Outlet</button>
+                <button type="button" role="tab" class="seg__btn" data-by="platform" aria-selected="false">Platform</button>
               </div>
             </header>
             <p class="panel__note">Click a source to see only its posts.</p>
@@ -199,7 +199,7 @@
       <section id="compare" class="card" aria-labelledby="compareTitle" hidden>
         <header class="card__head">
           <h2 id="compareTitle" class="card__title">Model comparison</h2>
-          <span class="card__note">Same posts, same prompts, two models</span>
+          <span class="card__note">Same posts, same prompts, different models</span>
           <button id="closeCompare" class="btn btn--quiet btn--icon" type="button" aria-label="Close comparison">✕</button>
         </header>
         <div id="compareBody"></div>
@@ -214,6 +214,7 @@
             <button type="button" role="tab" class="seg__btn" data-view="stories" aria-selected="false" title="Posts about the same story grouped together">Stories <span id="storyCount"></span></button>
           </div>
         </header>
+        <div id="sourceChips" class="feed__sources" role="group" aria-label="Show posts from" hidden></div>
         <div class="feed__filters">
           <div id="sentFilter" class="seg" role="group" aria-label="Show posts by mood">
             <button type="button" class="seg__btn chip is-on" data-sent="">All</button>
@@ -221,7 +222,6 @@
             <button type="button" class="seg__btn chip" data-sent="neutral">Neutral</button>
             <button type="button" class="seg__btn chip" data-sent="negative">Negative</button>
           </div>
-          <select id="sourceFilter" aria-label="Filter by source"><option value="">All sources</option></select>
           <select id="sortSelect" aria-label="Sort posts">
             <option value="popular">Most discussed</option>
             <option value="latest">Latest</option>
@@ -265,6 +265,10 @@
       <section class="set">
         <h3>AI</h3>
         <p id="aiInfo" class="hint">Checking…</p>
+        <label class="field">Model for the mood report
+          <select id="aiModel"><option value="auto">Automatic (recommended)</option></select>
+        </label>
+        <p id="aiModelHint" class="hint"></p>
         <label class="field">The AI writes in
           <select id="aiLanguage">
             <option value="en">English</option>
