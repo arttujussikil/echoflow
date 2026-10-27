@@ -53,47 +53,26 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                           EchoFlow                              │
-│                                                                 │
-│  ┌──────────┐   ┌───────────────────────────────────────────┐  │
-│  │  Web UI  │   │           REST API (Express)              │  │
-│  │  / (one  │   │  /api/discover  /api/platforms  /api/...  │  │
-│  │   page)  │   │                                           │  │
-│  └──────────┘   └──────────────────┬──────────────────────── ┘ │
-│                                    │                            │
-│                  ┌─────────────────▼──────────────────────┐    │
-│                  │           CollectorRegistry             │    │
-│                  │   register()   get()   getAll()         │    │
-│                  └──┬──────────────┬───────────────────┬───┘   │
-│                     │              │                   │        │
-│         ┌───────────▼──┐  ┌────────▼───────┐  ┌───────▼────┐  │
-│         │ Social       │  │ News APIs      │  │  RSS/Atom  │  │
-│         │ Reddit · HN  │  │ Google News    │  │  any feed  │  │
-│         │ Bluesky ·    │  │ Spaceflight +  │  │            │  │
-│         │ Lemmy        │  │ 8 free-key APIs│  │            │  │
-│         └──────────────┘  └────────────────┘  └────────────┘  │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  AI Provider (priority order)                            │  │
-│  │  1. NVIDIA NIM — nemotron-3 super → ultra (free cloud)   │  │
-│  │  2. Google Gemini (free tier)                            │  │
-│  │  3. Your own OpenAI-compatible model (optional)          │  │
-│  │  4. Ollama     — llama3.2:3b (local Docker fallback)     │  │
-│  │  Offline Hugging Face classifier labels moods if the     │  │
-│  │  cloud providers fail; local embeddings power Ask,       │  │
-│  │  Stories and Mood toward…                                │  │
-│  │  POST /api/analytics/analyze → sentiment, summary,       │  │
-│  │  opinion, themes, insights, per-post labels — free       │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  PostgreSQL 16                                           │  │
-│  │  searches · posts · comments · search_posts ·            │  │
-│  │  mood_history (mood over time)                           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    UI["<b>Web UI</b><br/>one page: public/"]
+    API["<b>REST API (Express)</b><br/>/api/discover · /api/platforms · /api/analytics/*"]
+    REG["<b>CollectorRegistry</b><br/>register() · get() · getAll()"]
+    SOC["<b>Social</b><br/>Reddit · Hacker News<br/>Bluesky · Lemmy"]
+    NEWS["<b>News APIs</b><br/>Google News (+ Finnish papers)<br/>Spaceflight + 8 free-key APIs"]
+    RSS["<b>RSS / Atom</b><br/>any feed"]
+    AI["<b>AI providers</b>, tried in order<br/>1. NVIDIA NIM: nemotron-3 super, then ultra (free cloud)<br/>2. Google Gemini (free tier)<br/>3. Your own OpenAI-compatible model (optional)<br/>4. Ollama: llama3.2:3b (local Docker fallback)"]
+    HF["<b>Local Hugging Face models</b><br/>sentiment classifier: labels moods if the LLMs fail<br/>embeddings: Ask, Stories, Mood toward"]
+    DB[("<b>PostgreSQL 16</b><br/>searches · posts · comments<br/>search_posts · mood_history")]
+
+    UI --> API
+    API --> REG
+    REG --> SOC
+    REG --> NEWS
+    REG --> RSS
+    API -- "POST /api/analytics/analyze<br/>labels, summary, opinion, themes" --> AI
+    API --> HF
+    API --> DB
 ```
 
 ### Key design decisions
@@ -106,7 +85,7 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 | Collector registry pattern | Adding a platform is one file + one `register()` call, no route changes |
 | `channels` abstraction | Subreddits, HN tags, feed URLs — one field each collector maps to its own concept |
 | RSS/Atom collector | Any site with a feed is instantly supported — no custom collector needed |
-| NVIDIA NIM → Gemini → Ollama, plus an offline classifier | Free cloud models for accuracy; local models keep it working with no key and no internet |
+| NVIDIA NIM → Gemini → your own model → Ollama, plus an offline classifier | Free cloud models for accuracy; local models keep it working with no key and no internet |
 | Opt-in persistence (`persist: true`) | Exploratory searches stay fast; you only hit the DB when you want to |
 
 ---
