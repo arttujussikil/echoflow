@@ -19,7 +19,6 @@
     "express": "^4.17.1",
     "pg": "^8.16.3",
     "rss-parser": "^3.13.0",
-    "sequelize": "^6.37.7",
     "winston": "^3.18.3"
   },
   "devDependencies": {
@@ -38,9 +37,8 @@
     "sentiment analysis",
     "trend analysis",
     "data aggregation",
-    "Power BI",
     "AI"
   ],
-  "author": "Your Name",
+  "author": "Niko Kulkula, Arttu-Jussi Kilponen",
   "license": "MIT"
 }
