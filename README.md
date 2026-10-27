@@ -41,11 +41,11 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 - **Model comparison** — run NVIDIA and Google Gemini on the same posts and see both analyses side by side, their agreement score and every post they disagree on
 - **English or Finnish** — the AI can write its summary, opinion and reasons in Finnish (Settings)
 - **Quick-search buttons** — News, Finland, Football, Tech… Add your own, and optionally attach a curated RSS feed bundle (World, Finland, Tech, Gaming, Esports)
-- **Free sources only** — 6 sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings → API keys)
+- **Free sources only** — Most sources work with no key at all; 8 more news APIs from public-apis switch on with a free key (on the server via `.env`, or per browser in Settings → API keys)
 - **Free AI, two tiers** — set `NVIDIA_API_KEY` for high-accuracy cloud inference via [NVIDIA NIM](https://build.nvidia.com) (free endpoint); falls back to local Ollama automatically
 - **Export & import** — download results with mood labels and AI analysis as CSV or JSON from Settings, and open them again later
 - **Pluggable sources** — a new news API is one entry in `news-api-collector.ts`; a new platform is one collector class + one `register()` call
-- **Persistent storage (optional)** — PostgreSQL backend for `POST /api/search` with `persist: true`
+- **Persistent storage (optional)** — every analysis is saved in PostgreSQL for mood over time; `POST /api/search` can also save the raw posts with `persist: true`
 
 ---
 
@@ -76,14 +76,20 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  AI Provider (priority order)                            │  │
 │  │  1. NVIDIA NIM — nemotron-3 super → ultra (free cloud)   │  │
-│  │  2. Ollama     — llama3.2:3b (local Docker fallback)     │  │
+│  │  2. Google Gemini (free tier)                            │  │
+│  │  3. Your own OpenAI-compatible model (optional)          │  │
+│  │  4. Ollama     — llama3.2:3b (local Docker fallback)     │  │
+│  │  Offline Hugging Face classifier labels moods if the     │  │
+│  │  cloud providers fail; local embeddings power Ask,       │  │
+│  │  Stories and Mood toward…                                │  │
 │  │  POST /api/analytics/analyze → sentiment, summary,       │  │
 │  │  opinion, themes, insights, per-post labels — free       │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  PostgreSQL 16                                           │  │
-│  │  searches · posts · comments · search_posts              │  │
+│  │  searches · posts · comments · search_posts ·            │  │
+│  │  mood_history (mood over time)                           │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -98,7 +104,7 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 | Collector registry pattern | Adding a platform is one file + one `register()` call, no route changes |
 | `channels` abstraction | Subreddits, HN tags, feed URLs — one field each collector maps to its own concept |
 | RSS/Atom collector | Any site with a feed is instantly supported — no custom collector needed |
-| NVIDIA NIM primary + Ollama fallback | Free cloud model for accuracy; local fallback works offline with zero setup |
+| NVIDIA NIM → Gemini → Ollama, plus an offline classifier | Free cloud models for accuracy; local models keep it working with no key and no internet |
 | Opt-in persistence (`persist: true`) | Exploratory searches stay fast; you only hit the DB when you want to |
 
 ---
@@ -118,7 +124,7 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 **1. Clone and configure**
 
 ```bash
-git clone <your-repo-url> echoflow
+git clone https://github.com/arttujussikil/echoflow.git
 cd echoflow
 cp .env.example .env
 ```
@@ -133,7 +139,7 @@ Get a free key at [build.nvidia.com](https://build.nvidia.com) → any model →
 NVIDIA_API_KEY=nvapi-xxxxxxxxxxxx
 ```
 
-Without a key, EchoFlow uses local Ollama automatically (downloads ~2 GB model on first use).
+Without any AI key, EchoFlow still works: mood labels come from an offline Hugging Face model (~280 MB, downloaded once on first start) and the summary from local Ollama (~2 GB, pulled on first use). A free Gemini key (`GEMINI_API_KEY`) is another option.
 
 **3. Start all services**
 
