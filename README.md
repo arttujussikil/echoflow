@@ -1,5 +1,7 @@
 # EchoFlow
 
+![EchoFlow front page: a search box asking "What is everyone saying about…", quick topic buttons, and a three-step "How it works"](docs/images/frontpage.png)
+
 > One search box for news and social media. Type a topic, see the most-talked-about posts, and let the AI sum up the mood and give its own take. Zero cloud cost.
 
 EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news APIs from [public-apis](https://github.com/public-apis/public-apis#news) in parallel. It analyses the results with NVIDIA NIM (free cloud) or local Ollama and shows everything on a single page, colour-coded by mood. Everything runs in Docker: one command and you're up.
