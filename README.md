@@ -54,26 +54,27 @@ EchoFlow is a school project for an AI course. **How the AI part works, how we c
 ## Architecture
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
 flowchart TB
-    UI["<b>Web UI</b><br/>one page: public/"]
-    API["<b>REST API (Express)</b><br/>/api/discover · /api/platforms · /api/analytics/*"]
-    REG["<b>CollectorRegistry</b><br/>register() · get() · getAll()"]
-    SOC["<b>Social</b><br/>Reddit · Hacker News<br/>Bluesky · Lemmy"]
-    NEWS["<b>News APIs</b><br/>Google News (+ Finnish papers)<br/>Spaceflight + 8 free-key APIs"]
+    UI["<b>Web UI</b> · one page"]
+    API["<b>REST API</b> (Express)<br/>/api/discover · /api/analytics/*"]
+    REG["<b>CollectorRegistry</b>"]
+    SOC["<b>Social</b><br/>Reddit · Hacker News · Bluesky · Lemmy"]
+    NEWS["<b>News</b><br/>Google News · Finnish papers · 8 free-key APIs"]
     RSS["<b>RSS / Atom</b><br/>any feed"]
-    AI["<b>AI providers</b>, tried in order<br/>1. NVIDIA NIM: nemotron-3 super, then ultra (free cloud)<br/>2. Google Gemini (free tier)<br/>3. Your own OpenAI-compatible model (optional)<br/>4. Ollama: llama3.2:3b (local Docker fallback)"]
-    HF["<b>Local Hugging Face models</b><br/>sentiment classifier: labels moods if the LLMs fail<br/>embeddings: Ask, Stories, Mood toward"]
-    DB[("<b>PostgreSQL 16</b><br/>searches · posts · comments<br/>search_posts · mood_history")]
+    LLM["<b>LLMs</b>, tried in order<br/>NVIDIA NIM → Gemini → your own model → Ollama"]
+    HF["<b>Local models</b><br/>mood classifier · embeddings"]
+    DB[("<b>PostgreSQL 16</b><br/>posts · mood history")]
 
     UI --> API
     API --> REG
-    REG --> SOC
-    REG --> NEWS
-    REG --> RSS
-    API -- "POST /api/analytics/analyze<br/>labels, summary, opinion, themes" --> AI
-    API --> HF
-    API --> DB
+    REG --> SOC & NEWS & RSS
+    API --> LLM & HF & DB
 ```
+
+- **LLMs** write the summary, the AI's take and the themes, and label each post's mood with a reason. NVIDIA (nemotron-3 super, then ultra) and Gemini are free cloud tiers; your own model is any OpenAI-compatible API set in `.env`; Ollama runs in Docker as the last resort.
+- **Local models** (Hugging Face, no key): the mood classifier labels posts when no LLM answers; the embeddings group posts into Stories and find the posts that answer Ask and Mood toward.
+- **PostgreSQL** keeps saved searches and every analysis for Mood over time.
 
 ### Key design decisions
 
