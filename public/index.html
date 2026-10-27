@@ -4,208 +4,233 @@
   <meta charset="utf-8" />
   <title>EchoFlow</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Search news and social media at once and get an AI read on the mood." />
+  <meta name="description" content="Search news and social media at once. The AI reads every post and tells you the mood." />
+  <script>
+    // Apply the saved theme before the page paints, so dark mode doesn't flash light first
+    try {
+      var t = JSON.parse(localStorage.getItem('echoflow.settings.v1') || '{}').theme;
+      document.documentElement.dataset.theme = t === 'dark' ? 'dark' : 'light';
+    } catch (e) { document.documentElement.dataset.theme = 'light'; }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Instrument+Sans:wght@400;500;600&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <a href="/" class="logo">echoflow</a>
-    <span id="aiPill" class="ai-pill" title="AI provider">AI: checking…</span>
-    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings" aria-controls="settings" aria-expanded="false">
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+    <a href="/" class="logo">EchoFlow</a>
+    <span id="aiPill" class="ai-pill" title="Which AI reads the posts">AI: checking…</span>
+    <button id="settingsBtn" class="btn btn--quiet topbar__settings" type="button" aria-label="Settings" aria-controls="settings" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
       <span>Settings</span>
     </button>
   </header>
 
   <main class="page">
-    <!-- Search + filters -->
-    <div class="search-wrap">
-      <form id="searchForm" class="search" role="search">
-        <svg class="search__icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
-        <input id="searchInput" class="search__input" type="search" autocomplete="off"
-          placeholder="Search everything — separate topics with commas, e.g. News, Finland"
-          aria-label="Search keywords" />
-        <button id="searchBtn" class="search__btn" type="submit">Search</button>
-        <button id="filterBtn" class="search__filter" type="button" aria-label="Search filters" title="Search filters: time range, results, sources"
-          aria-controls="filterPanel" aria-expanded="false">
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-          <span id="filterBadge" class="search__badge" hidden></span>
-        </button>
-      </form>
+    <!-- Search. On the front page this is the hero; after a search it shrinks to a bar. -->
+    <section class="hero" aria-labelledby="heroTitle">
+      <h1 id="heroTitle" class="hero__title">What is everyone saying about…</h1>
+      <p class="hero__lede">Search news and social media at once. The AI reads every post and tells you the mood.</p>
 
-      <!-- Filter panel (time range, results per source, sources) -->
-      <section id="filterPanel" class="filters" aria-label="Search filters" hidden>
-        <div class="filters__row">
-          <span class="filters__label">Time range</span>
-          <div id="fTime" class="seg seg--wrap" role="radiogroup" aria-label="Time range"></div>
-        </div>
-        <div class="filters__row">
-          <span class="filters__label">Results per source</span>
-          <div id="fPerSource" class="seg seg--wrap" role="radiogroup" aria-label="Results per source"></div>
-        </div>
-        <div class="filters__row filters__row--top">
-          <span class="filters__label">Sources</span>
-          <div class="filters__sources">
-            <div class="filters__actions">
-              <button id="fAll" class="link-btn" type="button">Select all</button>
-              <button id="fNone" class="link-btn" type="button">Clear</button>
-              <span id="fCount" class="muted"></span>
-            </div>
-            <div id="fSources"></div>
+      <div class="search-wrap">
+        <form id="searchForm" class="search" role="search">
+          <label for="searchInput" class="visually-hidden">Topic to search</label>
+          <input id="searchInput" class="search__input" type="search" autocomplete="off"
+            placeholder="a topic, a team, a company… e.g. Finland" />
+          <button id="filterBtn" class="search__filter" type="button" aria-label="Search filters: time range and sources" title="Time range and sources"
+            aria-controls="filterPanel" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+            <span id="filterBadge" class="search__badge" hidden></span>
+          </button>
+          <button id="searchBtn" class="btn btn--primary search__btn" type="submit">Read the mood</button>
+        </form>
+
+        <!-- Filter panel (time range, results per source, sources) -->
+        <section id="filterPanel" class="filters" aria-label="Search filters" hidden>
+          <div class="filters__row">
+            <span class="filters__label">Time range</span>
+            <div id="fTime" class="seg seg--wrap" role="radiogroup" aria-label="Time range"></div>
           </div>
-        </div>
-        <footer class="filters__foot">
-          <button id="fReset" class="link-btn" type="button">Reset to defaults</button>
-          <button id="fApply" class="search__btn" type="button">Done</button>
-        </footer>
-      </section>
-    </div>
+          <div class="filters__row">
+            <span class="filters__label">Results per source</span>
+            <div id="fPerSource" class="seg seg--wrap" role="radiogroup" aria-label="Results per source"></div>
+          </div>
+          <div class="filters__row filters__row--top">
+            <span class="filters__label">Sources</span>
+            <div class="filters__sources">
+              <div class="filters__actions">
+                <button id="fAll" class="link-btn" type="button">Select all</button>
+                <button id="fNone" class="link-btn" type="button">Clear</button>
+                <span id="fCount" class="muted"></span>
+              </div>
+              <div id="fSources"></div>
+            </div>
+          </div>
+          <footer class="filters__foot">
+            <button id="fReset" class="link-btn" type="button">Reset to defaults</button>
+            <button id="fApply" class="btn btn--primary" type="button">Done</button>
+          </footer>
+        </section>
+      </div>
 
-    <!-- Quick searches -->
-    <nav id="quickBar" class="quick" aria-label="Quick searches"></nav>
-
-    <!-- Source status after a search -->
-    <div id="sourceBar" class="sources" hidden></div>
-
-    <!-- Empty state -->
-    <section id="welcome" class="welcome">
-      <h1>What is the internet saying?</h1>
-      <p>One search runs across Reddit, Hacker News, Bluesky, Lemmy, Google News and free news APIs.
-        Then the AI sums it up, gives its own take and colours everything by mood.
-        Use the <span class="nowrap">filter button</span> next to the search bar to pick the time range and sources.</p>
+      <nav id="quickBar" class="quick" aria-label="Quick searches"></nav>
+      <div id="sourceBar" class="sources" hidden></div>
     </section>
 
-    <!-- Results: summary + AI side by side -->
-    <section id="dashboard" class="dashboard" hidden>
-      <article class="card">
+    <!-- Front page only: what happens when you search -->
+    <section id="welcome" class="how" aria-labelledby="howTitle">
+      <h2 id="howTitle" class="how__title">How it works</h2>
+      <ol class="how__steps">
+        <li class="how__step">
+          <h3>We search everywhere at once</h3>
+          <p>Reddit, Hacker News, Bluesky, Lemmy, Google News, Yle, Helsingin Sanomat and more, in one go.</p>
+        </li>
+        <li class="how__step">
+          <h3>The AI reads every post</h3>
+          <p>Each one is marked positive, neutral or negative, with a few words on why.</p>
+        </li>
+        <li class="how__step">
+          <h3>You get the mood report</h3>
+          <p>A summary, the AI's own take, and how the mood differs between sources and changes over time.</p>
+        </li>
+      </ol>
+      <p class="how__foot">Free sources only. No account needed. API keys you add stay in your browser.</p>
+    </section>
+
+    <!-- Results -->
+    <div id="dashboard" class="report" hidden>
+      <!-- The answer: the one bold element on the page -->
+      <section id="lead" class="lead" aria-labelledby="leadTitle">
+        <div class="lead__head">
+          <p class="lead__kicker">The mood on</p>
+          <span id="moodBadge" class="mood" hidden></span>
+        </div>
+        <h1 id="leadTitle" class="lead__title"></h1>
+        <p id="leadMeta" class="lead__meta"></p>
+        <div id="leadMood" class="lead__mood" aria-live="polite"></div>
+      </section>
+
+      <div class="split">
+        <article class="card summary" aria-labelledby="summaryTitle">
+          <h2 id="summaryTitle" class="card__title">What people are saying</h2>
+          <div id="aiBody"></div>
+        </article>
+
+        <aside class="side">
+          <!-- Mood by source -->
+          <section id="bySource" class="panel" aria-labelledby="bySourceTitle" hidden>
+            <header class="panel__head">
+              <h2 id="bySourceTitle" class="panel__title">Mood by source</h2>
+              <div class="seg" role="tablist" aria-label="Group sources by">
+                <button type="button" role="tab" class="seg__btn is-on" data-by="outlet" aria-selected="true">Outlet</button>
+                <button type="button" role="tab" class="seg__btn" data-by="platform" aria-selected="false">Platform</button>
+              </div>
+            </header>
+            <p class="panel__note">Click a source to see only its posts.</p>
+            <div id="bySourceRows" class="mbars"></div>
+            <details class="table-view">
+              <summary>Show as table</summary>
+              <div id="bySourceTable"></div>
+            </details>
+          </section>
+
+          <!-- Mood over time -->
+          <section id="overTime" class="panel" aria-labelledby="overTimeTitle" hidden>
+            <header class="panel__head">
+              <h2 id="overTimeTitle" class="panel__title">Mood over time</h2>
+              <div class="seg" role="tablist" aria-label="Time series">
+                <button type="button" role="tab" class="seg__btn is-on" data-time-view="published" aria-selected="true" title="The posts in this search, by when they were published">Published</button>
+                <button type="button" role="tab" class="seg__btn" data-time-view="saved" aria-selected="false" title="Earlier analyses of the same search, saved in the database">Earlier searches</button>
+              </div>
+            </header>
+            <p id="overTimeNote" class="panel__note"></p>
+            <div id="overTimeChart" class="tcols"></div>
+            <p class="panel__note">Faded columns have fewer than 3 posts.</p>
+            <details class="table-view">
+              <summary>Show as table</summary>
+              <div id="overTimeTable"></div>
+            </details>
+          </section>
+        </aside>
+      </div>
+
+      <!-- Top 10 -->
+      <section class="card" aria-labelledby="topTitle">
         <header class="card__head">
-          <h2>Top 10</h2>
-          <div class="seg" role="tablist" aria-label="Top 10 order">
-            <button type="button" role="tab" class="seg__btn is-on" data-top="popular" aria-selected="true">Most popular</button>
+          <h2 id="topTitle" class="card__title">Most discussed</h2>
+          <div class="seg" role="tablist" aria-label="Order">
+            <button type="button" role="tab" class="seg__btn is-on" data-top="popular" aria-selected="true">Most discussed</button>
             <button type="button" role="tab" class="seg__btn" data-top="latest" aria-selected="false">Latest</button>
           </div>
         </header>
-        <div id="stats" class="stats"></div>
         <ol id="topList" class="top-list"></ol>
-      </article>
+      </section>
 
-      <article class="card card--ai">
+      <div class="split split--even">
+        <!-- Ask the results (retrieval-augmented generation) -->
+        <section id="ask" class="card" aria-labelledby="askTitle" hidden>
+          <h2 id="askTitle" class="card__title">Ask about these posts</h2>
+          <p class="card__note">The AI answers only from the posts found, and shows which ones it used.</p>
+          <div id="askLog" class="ask__log" aria-live="polite"></div>
+          <form id="askForm" class="inline-form">
+            <label for="askInput" class="visually-hidden">Your question</label>
+            <input id="askInput" type="text" maxlength="300" autocomplete="off" placeholder="e.g. Why are people negative about this?" />
+            <button id="askBtn" class="btn btn--primary" type="submit">Ask</button>
+          </form>
+          <div id="askSuggest" class="chips suggest"></div>
+        </section>
+
+        <!-- Mood toward specific targets -->
+        <section id="targets" class="card" aria-labelledby="targetsTitle" hidden>
+          <h2 id="targetsTitle" class="card__title">How do they feel about…</h2>
+          <p class="card__note">The mood toward one person, company or place, not the overall tone.</p>
+          <form id="targetForm" class="inline-form">
+            <label for="targetInput" class="visually-hidden">Names to measure the mood toward</label>
+            <input id="targetInput" type="text" maxlength="120" autocomplete="off" placeholder="e.g. Google, EU (up to 3, separated by commas)" />
+            <button id="targetBtn" class="btn btn--primary" type="submit">Measure</button>
+          </form>
+          <div id="targetSuggest" class="chips suggest"></div>
+          <div id="targetResults" class="target-results"></div>
+        </section>
+      </div>
+
+      <!-- Side-by-side model comparison (opened from the summary card) -->
+      <section id="compare" class="card" aria-labelledby="compareTitle" hidden>
         <header class="card__head">
-          <h2>AI analysis</h2>
-          <span id="moodBadge" class="mood" hidden></span>
+          <h2 id="compareTitle" class="card__title">Model comparison</h2>
+          <span class="card__note">Same posts, same prompts, different models</span>
+          <button id="closeCompare" class="btn btn--quiet btn--icon" type="button" aria-label="Close comparison">✕</button>
         </header>
-        <div id="aiBody"></div>
-      </article>
-    </section>
+        <div id="compareBody"></div>
+      </section>
 
-    <!-- Ask the results (retrieval-augmented generation) -->
-    <section id="ask" class="card ask" hidden>
-      <header class="card__head">
-        <h2>Ask the results</h2>
-        <span class="muted">The AI answers only from the posts found, and shows which ones it used</span>
-      </header>
-      <div id="askLog" class="ask__log" aria-live="polite"></div>
-      <form id="askForm" class="ask__form">
-        <input id="askInput" type="text" maxlength="300" autocomplete="off" placeholder="e.g. Why are people negative about this?" aria-label="Question about the results" />
-        <button id="askBtn" class="search__btn" type="submit">Ask</button>
-      </form>
-      <div id="askSuggest" class="chips ask__suggest"></div>
-    </section>
-
-    <!-- Mood toward specific targets -->
-    <section id="targets" class="card targets" hidden>
-      <header class="card__head">
-        <h2>Mood toward…</h2>
-        <span class="muted">How the posts talk about a specific person, company or place, not their overall tone</span>
-      </header>
-      <form id="targetForm" class="ask__form">
-        <input id="targetInput" type="text" maxlength="120" autocomplete="off" placeholder="e.g. Google, EU, Russia (up to 3, comma-separated)" aria-label="Targets to measure the mood toward" />
-        <button id="targetBtn" class="search__btn" type="submit">Measure</button>
-      </form>
-      <div id="targetSuggest" class="chips ask__suggest"></div>
-      <div id="targetResults" class="target-results"></div>
-    </section>
-
-    <!-- Mood by source -->
-    <section id="bySource" class="card by-source" hidden>
-      <header class="card__head">
-        <h2>Mood by source</h2>
-        <span class="muted">Does the same topic feel different depending on where you read about it?</span>
-        <div class="seg" role="tablist" aria-label="Group sources by">
-          <button type="button" role="tab" class="seg__btn is-on" data-by="platform" aria-selected="true">Platform</button>
-          <button type="button" role="tab" class="seg__btn" data-by="outlet" aria-selected="false">Outlet</button>
-        </div>
-      </header>
-      <div class="chart-legend" aria-hidden="true">
-        <span><i class="key key--positive"></i>Positive</span>
-        <span><i class="key key--neutral"></i>Neutral</span>
-        <span><i class="key key--negative"></i>Negative</span>
-      </div>
-      <div id="bySourceRows" class="mbars"></div>
-      <details class="table-view">
-        <summary>Show as table</summary>
-        <div id="bySourceTable"></div>
-      </details>
-    </section>
-
-    <!-- Mood over time -->
-    <section id="overTime" class="card over-time" hidden>
-      <header class="card__head">
-        <h2>Mood over time</h2>
-        <span id="overTimeNote" class="muted"></span>
-        <div class="seg" role="tablist" aria-label="Time series">
-          <button type="button" role="tab" class="seg__btn is-on" data-time-view="published" aria-selected="true" title="The posts in this search, by when they were published">By publish date</button>
-          <button type="button" role="tab" class="seg__btn" data-time-view="saved" aria-selected="false" title="Earlier analyses of the same search, saved in the database">Saved analyses</button>
-        </div>
-      </header>
-      <div class="chart-legend" aria-hidden="true">
-        <span><i class="key key--positive"></i>Positive</span>
-        <span><i class="key key--neutral"></i>Neutral</span>
-        <span><i class="key key--negative"></i>Negative</span>
-        <span class="muted">Faded = fewer than 3 posts</span>
-      </div>
-      <div id="overTimeChart" class="tcols"></div>
-      <details class="table-view">
-        <summary>Show as table</summary>
-        <div id="overTimeTable"></div>
-      </details>
-    </section>
-
-    <!-- Side-by-side model comparison (opened from the AI card) -->
-    <section id="compare" class="card compare" hidden>
-      <header class="card__head">
-        <h2>Model comparison</h2>
-        <span class="muted">Same posts, same prompts, two models</span>
-        <button id="closeCompare" class="icon-btn" type="button" aria-label="Close comparison">✕</button>
-      </header>
-      <div id="compareBody"></div>
-    </section>
-
-    <!-- All results -->
-    <section id="feed" class="card feed" hidden>
-      <header class="card__head feed__head">
-        <h2>All results <span id="feedCount" class="muted"></span></h2>
-        <div class="seg" role="tablist" aria-label="Show posts or stories">
-          <button type="button" role="tab" class="seg__btn is-on" data-view="posts" aria-selected="true">Posts</button>
-          <button type="button" role="tab" class="seg__btn" data-view="stories" aria-selected="false" title="Posts about the same story grouped together">Stories <span id="storyCount" class="muted"></span></button>
-        </div>
-        <div class="feed__filters">
-          <div id="sentFilter" class="chips" aria-label="Filter by mood">
-            <button type="button" class="chip is-on" data-sent="">All</button>
-            <button type="button" class="chip chip--pos" data-sent="positive">Positive</button>
-            <button type="button" class="chip chip--neu" data-sent="neutral">Neutral</button>
-            <button type="button" class="chip chip--neg" data-sent="negative">Negative</button>
+      <!-- All results -->
+      <section id="feed" class="card" aria-labelledby="feedTitle" hidden>
+        <header class="card__head feed__head">
+          <h2 id="feedTitle" class="card__title">All posts <span id="feedCount" class="muted"></span></h2>
+          <div class="seg" role="tablist" aria-label="Show posts or stories">
+            <button type="button" role="tab" class="seg__btn is-on" data-view="posts" aria-selected="true">Posts</button>
+            <button type="button" role="tab" class="seg__btn" data-view="stories" aria-selected="false" title="Posts about the same story grouped together">Stories <span id="storyCount"></span></button>
           </div>
-          <select id="sourceFilter" aria-label="Filter by source"><option value="">All sources</option></select>
-          <select id="sortSelect" aria-label="Sort results">
-            <option value="popular">Most popular</option>
+        </header>
+        <div id="sourceChips" class="feed__sources" role="group" aria-label="Show posts from" hidden></div>
+        <div class="feed__filters">
+          <div id="sentFilter" class="seg" role="group" aria-label="Show posts by mood">
+            <button type="button" class="seg__btn chip is-on" data-sent="">All</button>
+            <button type="button" class="seg__btn chip" data-sent="positive">Positive</button>
+            <button type="button" class="seg__btn chip" data-sent="neutral">Neutral</button>
+            <button type="button" class="seg__btn chip" data-sent="negative">Negative</button>
+          </div>
+          <select id="sortSelect" aria-label="Sort posts">
+            <option value="popular">Most discussed</option>
             <option value="latest">Latest</option>
           </select>
         </div>
-      </header>
-      <ul id="feedList" class="feed__list"></ul>
-      <button id="moreBtn" class="ghost-btn" type="button" hidden>Show more</button>
-    </section>
+        <ul id="feedList" class="feed__list"></ul>
+        <button id="moreBtn" class="btn btn--quiet" type="button" hidden>Show more</button>
+      </section>
+    </div>
   </main>
 
   <!-- Settings drawer -->
@@ -213,17 +238,25 @@
   <aside id="settings" class="drawer" aria-label="Settings" aria-hidden="true">
     <header class="drawer__head">
       <h2>Settings</h2>
-      <button id="closeSettings" class="icon-btn" type="button" aria-label="Close settings">✕</button>
+      <button id="closeSettings" class="btn btn--quiet btn--icon" type="button" aria-label="Close settings">✕</button>
     </header>
 
     <div class="drawer__body">
       <section class="set">
-        <h3>Export &amp; import</h3>
-        <p class="hint">Download the current results with their mood labels and the AI analysis, or open a file you exported earlier.</p>
+        <h3>Appearance</h3>
+        <div id="themeChoice" class="seg" role="radiogroup" aria-label="Colour theme">
+          <button type="button" class="seg__btn is-on" role="radio" aria-checked="true" data-theme-choice="light">Light</button>
+          <button type="button" class="seg__btn" role="radio" aria-checked="false" data-theme-choice="dark">Dark</button>
+        </div>
+      </section>
+
+      <section class="set">
+        <h3>Export and import</h3>
+        <p class="hint">Download the current posts with their moods and the AI analysis, or open a file you exported earlier.</p>
         <div class="row">
-          <button id="exportCsv" class="ghost-btn" type="button" disabled>Download CSV</button>
-          <button id="exportJson" class="ghost-btn" type="button" disabled>Download JSON</button>
-          <label class="ghost-btn file-btn">Import file…
+          <button id="exportCsv" class="btn btn--quiet" type="button" disabled>Download CSV</button>
+          <button id="exportJson" class="btn btn--quiet" type="button" disabled>Download JSON</button>
+          <label class="btn btn--quiet file-btn">Open a file…
             <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" />
           </label>
         </div>
@@ -232,35 +265,38 @@
       <section class="set">
         <h3>AI</h3>
         <p id="aiInfo" class="hint">Checking…</p>
-        <label class="field">AI writes in
+        <label class="field">Model for the mood report
+          <select id="aiModel"><option value="auto">Automatic (recommended)</option></select>
+        </label>
+        <p id="aiModelHint" class="hint"></p>
+        <label class="field">The AI writes in
           <select id="aiLanguage">
             <option value="en">English</option>
             <option value="fi">Suomi (Finnish)</option>
           </select>
         </label>
-        <p class="hint">Summary, opinion, themes and the reason behind each post's mood.</p>
+        <p class="hint">The summary, the AI's take, themes and the reason behind each post's mood.</p>
       </section>
 
       <section class="set">
         <h3>Quick searches</h3>
-        <p class="hint">Buttons under the search bar. A button can also pull in a bundle of news feeds.</p>
+        <p class="hint">The buttons under the search box. A button can also pull in a bundle of news feeds.</p>
         <ul id="quickEditList" class="edit-list"></ul>
         <form id="quickAddForm" class="row">
-          <input id="qaLabel" placeholder="Label" required maxlength="24" />
-          <input id="qaQuery" placeholder="Keywords, comma-separated" />
+          <input id="qaLabel" placeholder="Label" required maxlength="24" aria-label="Button label" />
+          <input id="qaQuery" placeholder="Topics, separated by commas" aria-label="Topics" />
           <select id="qaFeeds" aria-label="Feed bundle"></select>
-          <button class="ghost-btn" type="submit">Add</button>
+          <button class="btn btn--quiet" type="submit">Add button</button>
         </form>
-        <button id="resetQuick" class="link-btn" type="button">Restore default buttons</button>
+        <button id="resetQuick" class="link-btn" type="button">Restore the default buttons</button>
       </section>
 
       <section class="set" id="keysSection">
         <h3>API keys</h3>
-        <p class="hint">These news APIs from <a href="https://github.com/public-apis/public-apis#news" target="_blank" rel="noopener">public-apis</a> need a free key.
-          Paste one to unlock the source in the search filters. Keys stay in this browser and go only to your EchoFlow server.</p>
+        <p class="hint">These news sources from <a href="https://github.com/public-apis/public-apis#news" target="_blank" rel="noopener">public-apis</a> need a free key.
+          Paste one to switch the source on in the search filters. Keys stay in this browser and are only sent to your EchoFlow server.</p>
         <div id="sourceList" class="source-list"><p class="hint">Loading…</p></div>
       </section>
-
     </div>
   </aside>
 

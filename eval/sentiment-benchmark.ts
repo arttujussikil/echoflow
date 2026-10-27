@@ -27,7 +27,9 @@
  *
  * Options:
  *   --dataset D    headlines (default) | fpb | tweeteval | finsen | newsmtsc | all
- *   --models a,b   models to test (default: app's NVIDIA chain + Gemini if its key is set).
+ *   --models a,b   models to test (default: app's NVIDIA chain + Gemini if its key is set
+ *                  + your custom model if CUSTOM_AI_URL is set). "custom:<model>" uses the
+ *                  CUSTOM_AI_URL server.
  *                  "hf:<repo>" runs a Hugging Face sentiment classifier locally (ONNX, via
  *                  @huggingface/transformers): free, no key, no rate limit; downloaded once
  *                  into eval/models-cache/
@@ -63,6 +65,8 @@ const DEFAULT_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b',
   'nvidia/nemotron-3-ultra-550b-a55b',
   ...(process.env.GEMINI_API_KEY ? ['gemini-3.5-flash', 'gemini-3.8-flash'] : []),
+  // Your own model (CUSTOM_AI_URL + CUSTOM_AI_MODEL in .env)
+  ...(process.env.CUSTOM_AI_URL ? (process.env.CUSTOM_AI_MODEL || '').split(',').map(m => m.trim()).filter(Boolean).map(m => `custom:${m}`) : []),
 ];
 const models = (arg('models') ?? DEFAULT_MODELS.join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const runs = Math.max(1, Number(arg('runs') ?? 1));
@@ -346,7 +350,7 @@ async function benchmarkDataset(ds: Dataset) {
   }
 
   const haveKeys = Boolean(process.env.NVIDIA_API_KEY || process.env.GEMINI_API_KEY);
-  const runnable = models.filter(m => m.startsWith('hf:') || haveKeys);
+  const runnable = models.filter(m => m.startsWith('hf:') || (m.startsWith('custom:') ? Boolean(process.env.CUSTOM_AI_URL) : haveKeys));
   if (runnable.length) {
     // Local classifiers have no prompt, so they run once whatever --prompt says
     const jobs = runnable.flatMap(model => (model.startsWith('hf:') ? ['numbered' as Mode] : modes).map(mode => ({ model, mode })));
@@ -464,8 +468,8 @@ function reportDataset({ ds, items, results }: Awaited<ReturnType<typeof benchma
 // ── Main ───────────────────────────────────────────────────────────────────────
 async function main() {
   if (flag('make-template')) { makeTemplate(); return; }
-  if (!process.env.NVIDIA_API_KEY && !process.env.GEMINI_API_KEY) {
-    console.error('No NVIDIA_API_KEY or GEMINI_API_KEY in .env — only the keyword baseline will run.');
+  if (!process.env.NVIDIA_API_KEY && !process.env.GEMINI_API_KEY && !process.env.CUSTOM_AI_URL) {
+    console.error('No NVIDIA_API_KEY, GEMINI_API_KEY or CUSTOM_AI_URL in .env — only the keyword baseline (and hf: models) will run.');
   }
 
   const names = datasetArg === 'all' ? ['headlines', 'fpb', 'tweeteval', 'finsen', 'newsmtsc'] : datasetArg.split(',');

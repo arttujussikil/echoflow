@@ -72,6 +72,8 @@ const DEFAULT_SETTINGS = {
   disabledSources: [],  // default-on sources the user switched off
   optIn: [],            // default-off sources (single Finnish papers) the user switched on
   aiLanguage: 'en',     // language the AI writes in: 'en' | 'fi'
+  aiModel: 'auto',      // model for the mood report: 'auto' (fallback chain) | 'nvidia' | 'gemini' | 'local'
+  theme: 'light',       // 'light' | 'dark'; light by default, whatever the system uses
   apiKeys: {},
   quick: DEFAULT_QUICK,
 };
@@ -79,6 +81,7 @@ const DEFAULT_SETTINGS = {
 const AI_SAMPLE_SIZE = 25;   // posts the AI summarises (labels are given to all, up to AI_MAX_POSTS)
 const AI_MAX_POSTS = 200;
 const FEED_PAGE = 30;
+const SOURCE_CHIPS = 8;   // outlets shown as buttons above the posts; the rest go in "More"
 
 // ── Settings (per-browser, localStorage) ───────────────────────────────────────
 const SETTINGS_KEY = 'echoflow.settings.v1';
@@ -105,7 +108,7 @@ let searchSeq = 0;           // guards against stale responses
 let aiStatus = null;         // from /api/analytics/status: which AI providers are configured
 let compare = null;          // side-by-side model comparison for the current results
 let topMode = 'popular';
-let bySourceMode = 'platform';
+let bySourceMode = 'outlet';
 let feedView = 'posts';
 let timeView = 'published';   // Mood over time: 'published' or 'saved'
 let askLog = [];
@@ -200,17 +203,18 @@ async function runSearch(query, bundle) {
   history.replaceState(null, '', url);
 
   setBusy(true);
-  $('welcome').hidden = true;
-  $('dashboard').hidden = false;
+  showReport();
   $('feed').hidden = true;
   compare = null;
   $('compare').hidden = true;
   askLog = [];
   targetState = null;
   $('sourceBar').hidden = true;
-  $('stats').innerHTML = '';
-  $('topList').innerHTML = `<li class="loading"><span class="spinner"></span>Searching ${enabledSources().length} sources…</li>`;
-  $('aiBody').innerHTML = `<p class="ai-foot">The AI reads the results once they are in.</p>`;
+  $('leadTitle').textContent = query || `${FEED_BUNDLES[bundle]?.label} feeds`;
+  $('leadMeta').textContent = `Searching ${enabledSources().length} sources…`;
+  $('leadMood').innerHTML = `<div class="loading"><span class="spinner"></span>Collecting posts</div>`;
+  $('topList').innerHTML = '';
+  $('aiBody').innerHTML = `<p class="ai-foot">The AI reads the posts once they are in.</p>`;
   $('moodBadge').hidden = true;
 
   try {
@@ -241,10 +245,14 @@ async function runSearch(query, bundle) {
 
     loadStories(seq);
     if (current.results.length) await runAI(seq);
-    else $('aiBody').innerHTML = `<p class="ai-foot">Nothing to analyse — try other keywords or a longer time range in Settings.</p>`;
+    else {
+      $('leadMood').innerHTML = `<p class="lead__status">No posts found. Try other words, or a longer time range in the filters next to the search box.</p>`;
+      $('aiBody').innerHTML = `<p class="ai-foot">Nothing to read yet.</p>`;
+    }
   } catch (err) {
     if (seq !== searchSeq) return;
-    $('topList').innerHTML = `<li class="ai-error">${esc(err.message)}</li>`;
+    $('leadMeta').textContent = '';
+    $('leadMood').innerHTML = `<p class="ai-error">${esc(err.message)}</p>`;
     $('aiBody').innerHTML = '';
   } finally {
     if (seq === searchSeq) setBusy(false);
@@ -284,7 +292,9 @@ function aiPosts(posts) {
 async function runAI(seq = searchSeq) {
   if (!current?.results.length) return;
   const sample = aiPosts(current.results);
-  $('aiBody').innerHTML = `<div class="loading"><span class="spinner"></span>AI is reading ${sample.length} posts… (usually 10–30 s)</div>`;
+  const analysing = current;
+  analysing.aiReading = sample.length;
+  renderAI();
 
   try {
     const res = await fetch('/api/analytics/analyze', {
@@ -293,6 +303,7 @@ async function runAI(seq = searchSeq) {
       body: JSON.stringify({
         keyword: current.query || undefined,
         language: settings.aiLanguage,
+        provider: activeModel() === 'auto' ? undefined : activeModel(),
         // Saves the mood to the history for "Mood over time"
         topic: current.query || (current.bundle ? `${FEED_BUNDLES[current.bundle]?.label} feeds` : undefined),
         posts: slimForAI(sample),
@@ -317,17 +328,25 @@ async function runAI(seq = searchSeq) {
   } catch (err) {
     if (seq !== searchSeq) return;
     current.analysisError = err.message;
+  } finally {
+    analysing.aiReading = 0;
   }
   renderAll();
+}
+
+/** Front page → report: the hero shrinks to a search bar and "How it works" goes away. */
+function showReport() {
+  document.body.classList.add('has-results');
+  $('welcome').hidden = true;
+  $('dashboard').hidden = false;
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────────
 function renderAll() {
   if (!current) return;
-  $('welcome').hidden = true;
-  $('dashboard').hidden = false;
+  showReport();
   renderSourceBar();
-  renderStats();
+  renderLeadHeader();
   renderTop();
   renderAI();
   renderAsk();
@@ -342,27 +361,26 @@ function platformName(id) {
   return platforms.find(p => p.id === id)?.displayName || current?.sources?.[id]?.name || id;
 }
 
+/** Only the sources that failed: the counts per source are in the outlet buttons and "Mood by source". */
 function renderSourceBar() {
-  const entries = Object.entries(current.sources || {});
-  $('sourceBar').hidden = !entries.length;
-  $('sourceBar').innerHTML = entries
-    .sort((a, b) => b[1].count - a[1].count)
-    .map(([id, s]) => {
-      const cls = s.skipped ? 'src src--skip' : s.error && !s.count ? 'src src--err' : 'src';
-      const title = s.error ? ` title="${esc(s.error)}"` : '';
-      return `<span class="${cls}"${title}>${esc(s.name)} <b>${s.count}</b>${s.error && !s.count ? ' ⚠' : ''}</span>`;
-    }).join('');
+  const failed = Object.values(current.sources || {}).filter(s => s.error && !s.count);
+  $('sourceBar').hidden = !failed.length;
+  $('sourceBar').innerHTML = failed.length ? `<span>Couldn't reach:</span>` + failed.map(s =>
+    `<span class="src src--err" title="${esc(s.error)}">${esc(s.name)} ⚠</span>`).join('') : '';
 }
 
-function renderStats() {
+/** "Finland" + "101 posts from Yle, Bluesky, Hacker News and 30 more, in the past week" at the top of the report. */
+function renderLeadHeader() {
   const r = current.results;
-  const withResults = new Set(r.map(p => p.platform)).size;
-  const engagement = r.reduce((s, p) => s + p._pop, 0);
-  $('stats').innerHTML = `
-    <div><b>${r.length}</b>results</div>
-    <div><b>${withResults}</b>sources</div>
-    ${engagement ? `<div><b>${compact(engagement)}</b>engagement</div>` : ''}
-    ${current.query ? `<div><b>${esc(current.query)}</b>search</div>` : ''}`;
+  const counts = new Map();
+  for (const p of r) counts.set(outletOf(p), (counts.get(outletOf(p)) || 0) + 1);
+  const names = [...counts].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+  const from = names.length <= 3 ? names.join(', ').replace(/, ([^,]*)$/, ' and $1')
+    : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+  const range = TIME_OPTIONS.find(([v]) => v === settings.timeRange)?.[1].toLowerCase();
+  $('leadTitle').textContent = current.query || (current.bundle ? `${FEED_BUNDLES[current.bundle]?.label} feeds` : 'Imported posts');
+  $('leadMeta').textContent = !r.length ? 'No posts found'
+    : `${r.length} posts from ${from}${range && range !== 'any time' ? `, in the ${range}` : ''}`;
 }
 
 function sortPosts(posts, mode) {
@@ -387,17 +405,22 @@ function topPosts(posts, mode, n = 10, perSource = 3) {
 function renderTop() {
   const top = topPosts(current.results, topMode);
   if (!top.length) {
-    $('topList').innerHTML = `<li class="ai-foot" style="display:block">No results. Check the source chips above for errors, or widen the time range in Settings.</li>`;
+    $('topList').innerHTML = `<li class="ai-foot">No posts. Sources that failed are marked in red under the search box; hover one to see why.</li>`;
     return;
   }
   $('topList').innerHTML = top.map(p => `
     <li>
       <div>
         <a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
-        <div class="top-meta"><span class="dot dot--${p._sent}" title="${esc(moodTitle(p))}"></span>${esc(sourceLabel(p))} · ${timeAgo(p._time)}</div>
+        <div class="top-meta">${[esc(sourceLabel(p)), timeAgo(p._time), engagementLabel(p)].filter(Boolean).join(', ')}</div>
+        <div class="top-mood">${moodTag(p)}${p._reason ? `<span class="reason">${esc(p._reason)}</span>` : ''}</div>
       </div>
-      <span class="top-score">${engagementLabel(p)}</span>
     </li>`).join('');
+}
+
+/** The mood as a tinted word. Keyword guesses get an outline so they read as less certain. */
+function moodTag(p) {
+  return `<span class="mood-tag mood-tag--${p._sent}${p._ai ? '' : ' is-estimate'}" title="${esc(moodTitle(p))}">${p._sent}${p._ai ? '' : ' (guess)'}</span>`;
 }
 
 /** "nvidia:nvidia/nemotron-3-super…" → "NVIDIA NIM · nemotron-3-super…" */
@@ -405,7 +428,7 @@ function providerName(p) {
   if (!p) return '';
   const [kind, ...rest] = p.split(':');
   const model = rest.join(':').split('/').pop();
-  const names = { nvidia: 'NVIDIA NIM', gemini: 'Google Gemini', ollama: 'Ollama', local: 'Offline model' };
+  const names = { nvidia: 'NVIDIA NIM', gemini: 'Google Gemini', custom: aiStatus?.customName || 'Custom model', ollama: 'Ollama', local: 'Offline model' };
   return `${names[kind] || kind} · ${model}`;
 }
 const PROVIDER_LABEL = a => providerName(a.provider);
@@ -421,55 +444,99 @@ function moodCounts() {
   };
 }
 
+/**
+ * The AI result is split in two: the lead card gets the answer (one sentence, the
+ * mood bar, clickable percentages) and the summary card gets the AI's writing.
+ */
 function renderAI() {
   const a = current.analysis;
   const badge = $('moodBadge');
+  const skeleton = `<div class="skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span></div>`;
+  badge.hidden = !a;
 
-  if (!a && !current.analysisError) {
-    // Imported data without analysis, or still waiting
-    if (!$('aiBody').querySelector('.loading')) {
-      $('aiBody').innerHTML = `${moodBlock(moodCounts(), 'Mood by keywords (estimate)')}
-        <button id="runAiBtn" class="ghost-btn" type="button">Analyse with AI</button>`;
-      $('runAiBtn').onclick = () => runAI();
-      wireLegend();
-    }
-    badge.hidden = true;
-    return;
-  }
-
-  if (!a) {
-    $('aiBody').innerHTML = `
-      <p class="ai-error">AI unavailable: ${esc(current.analysisError)}</p>
-      ${moodBlock(moodCounts(), 'Mood by keywords (estimate)')}
-      <button id="runAiBtn" class="ghost-btn" type="button">Try again</button>`;
-    $('runAiBtn').onclick = () => runAI();
-    badge.hidden = true;
+  if (current.aiReading) {
+    $('leadMood').innerHTML = `
+      <p class="lead__verdict">The AI is reading ${current.aiReading} posts…</p>
+      ${moodBlock(moodCounts(), { estimate: true })}
+      <p class="lead__status">Until it's done, the bar is a rough guess from keywords. This usually takes 10 to 30 seconds; the posts below are ready to read now.</p>`;
+    $('aiBody').innerHTML = `${skeleton}<p class="ai-foot">The summary appears once the AI has read the posts.</p>`;
     wireLegend();
     return;
   }
 
-  badge.hidden = false;
+  if (!a) {
+    // Imported data without an analysis, or the AI failed
+    $('leadMood').innerHTML = `
+      ${moodBlock(moodCounts(), { estimate: true })}
+      <p class="lead__status">This is a rough guess from keywords, not the AI's reading.</p>`;
+    $('aiBody').innerHTML = `
+      ${current.analysisError ? `<p class="ai-error">The AI couldn't read the posts: ${esc(current.analysisError)}</p>` : '<p class="ai-foot">These posts haven\'t been read by the AI.</p>'}
+      <button id="runAiBtn" class="btn btn--quiet" type="button">${current.analysisError ? 'Try again' : 'Let the AI read them'}</button>`;
+    $('runAiBtn').onclick = () => runAI();
+    wireLegend();
+    return;
+  }
+
   badge.textContent = a.mood;
   badge.className = `mood mood--${a.mood}`;
+  const verdict = moodVerdict(a.sentiment);
+  $('leadMood').innerHTML = `
+    ${verdict ? `<p class="lead__verdict">${esc(verdict)}</p>` : ''}
+    ${moodBlock(a.sentiment)}`;
 
+  const unlabelled = current.results.length - (a.labelledCount ?? 0);
+  const offline = a.labelProvider?.startsWith('local:');
+  const offlineChosen = offline && activeModel() === 'local';
+  const offlineName = offline ? esc(providerName(a.labelProvider).split(' · ')[1]) : '';
+  const credit = offlineChosen
+    ? `The offline model (${offlineName}) labelled ${a.labelledCount} of ${current.results.length} posts. It gives labels but no reasons.`
+    : offline
+    ? `The cloud AI didn't answer, so an offline model (${offlineName}) labelled the moods. It gives labels but no reasons.`
+    : `The AI read ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` (${esc(PROVIDER_LABEL(a))})` : ''}.`;
   $('aiBody').innerHTML = `
-    ${moodBlock(a.sentiment, 'Mood')}
-    ${a.summary ? `<div class="ai-block"><h3>Summary</h3><p>${esc(a.summary)}</p></div>` : ''}
-    ${a.opinion ? `<div class="ai-block"><h3>AI's opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
-    ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
-    ${a.insights?.length ? `<div class="ai-block"><h3>Insights</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
-    <p class="ai-foot">AI labelled the mood of ${a.labelledCount ?? a.postCount} of ${current.results.length} posts${PROVIDER_LABEL(a) ? ` · ${esc(PROVIDER_LABEL(a))}` : ''}.${(a.labelledCount ?? 0) < current.results.length ? ' Posts marked * are keyword estimates.' : ''}
-      ${a.labelProvider?.startsWith('local:') ? `<br>The cloud AI didn't answer, so the moods come from the <b>offline model</b> (${esc(providerName(a.labelProvider).split(' · ')[1])}), which gives labels but no reasons.` : ''}</p>
+    ${a.summary ? `<p class="ai-summary">${esc(a.summary)}</p>`
+      : offlineChosen ? `<p class="ai-summary muted">The offline model only labels moods, so there's no written summary. Pick another model in Settings to get one.</p>`
+      : `<p class="ai-summary muted">No written summary this time: that needs a cloud AI. Add a free <code>NVIDIA_API_KEY</code> on the server to get one.</p>`}
+    ${a.opinion ? `<aside class="take"><h3>The AI's take</h3><p>${esc(a.opinion)}</p></aside>` : ''}
+    ${a.themes?.length ? `<div class="ai-block"><h3>Themes <span class="muted">· click one to ask about it</span></h3><div class="themes">${a.themes.map(t =>
+      `<button type="button" class="theme" data-theme-q="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>` : ''}
+    ${a.insights?.length ? `<div class="ai-block"><h3>Worth noticing</h3><ul class="insights">${a.insights.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
+    <p class="ai-foot">${credit}${unlabelled > 0 ? ` The other ${unlabelled} posts are marked "guess": their mood comes from keywords.` : ''}</p>
     ${compareButton()}`;
   wireLegend();
   wireCompareButton();
+  // A theme is a ready-made question for "Ask about these posts"
+  $('aiBody').querySelectorAll('[data-theme-q]').forEach(b => b.onclick = () => {
+    $('ask').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    ask(`What are people saying about ${b.dataset.themeQ.toLowerCase()}?`);
+  });
+}
+
+/**
+ * One plain sentence for the top of the report, e.g. "Mostly neutral, with a negative streak."
+ * s: { positive, neutral, negative } as whole percentages that add up to 100.
+ * Built from the numbers only, so it can't contradict the bar under it.
+ */
+function moodVerdict(s) {
+  const [top] = ['positive', 'neutral', 'negative'].sort((a, b) => s[b] - s[a]);
+  const lean = s.positive - s.negative;
+  if (top === 'neutral') {
+    const how = s.neutral >= 60 ? 'Mostly neutral' : s.neutral >= 45 ? 'Largely neutral' : 'More neutral than anything else';
+    const rest = Math.abs(lean) <= 5 ? 'the rest is split evenly' : `the rest tilts ${lean > 0 ? 'positive' : 'negative'}`;
+    return `${how}; ${rest}.`;
+  }
+  const other = top === 'positive' ? 'negative' : 'positive';
+  if (s[other] >= 25) return `Divided: ${s.positive}% positive against ${s.negative}% negative.`;
+  return s[top] >= 60 ? `Mostly ${top}.` : `More ${top} than not.`;
 }
 
 function compareButton() {
-  const ready = aiStatus?.nvidia && aiStatus?.gemini;
-  const hint = ready ? 'Run both models on the same posts and show them side by side'
-    : 'Needs both NVIDIA_API_KEY and GEMINI_API_KEY in .env';
-  return `<button id="compareBtn" class="ghost-btn" type="button" title="${esc(hint)}" ${ready ? '' : 'disabled'}>⇄ Compare NVIDIA vs Gemini</button>
+  const list = compareProviders();
+  const ready = list.length >= 2;
+  const hint = ready ? 'Run the models on the same posts and show them side by side'
+    : 'Needs at least two of NVIDIA_API_KEY, GEMINI_API_KEY and CUSTOM_AI_URL in .env';
+  const label = ready ? `Compare ${list.map(p => p.short).join(list.length > 2 ? ', ' : ' and ').replace(/, ([^,]*)$/, ' and $1')}` : 'Compare NVIDIA and Gemini';
+  return `<button id="compareBtn" class="btn btn--quiet" type="button" title="${esc(hint)}" ${ready ? '' : 'disabled'}>${esc(label)}</button>
     ${ready ? '' : `<p class="ai-foot">Add a free <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Gemini key</a> as <code>GEMINI_API_KEY</code> in .env to compare models.</p>`}`;
 }
 
@@ -478,23 +545,22 @@ function wireCompareButton() {
   if (btn) btn.onclick = runCompare;
 }
 
-function moodBlock(s, title) {
-  const rows = [['positive', 'pos', 'Positive'], ['neutral', 'neu', 'Neutral'], ['negative', 'neg', 'Negative']];
+/** Big mood bar plus one button per mood; a button filters the post list to that mood. */
+function moodBlock(s, { estimate = false } = {}) {
+  const rows = [['positive', 'pos', 'positive'], ['neutral', 'neu', 'neutral'], ['negative', 'neg', 'negative']];
   return `
-    <div class="ai-block">
-      <h3>${esc(title)}</h3>
-      <div class="moodbar" role="img" aria-label="Positive ${s.positive}%, neutral ${s.neutral}%, negative ${s.negative}%">
-        ${rows.map(([k, c]) => `<span class="${c}" style="width:${s[k]}%"></span>`).join('')}
-      </div>
-      <div class="legend">
-        ${rows.map(([k, , label]) => `<button type="button" data-sent="${k}" class="${feedFilter.sent === k ? 'is-on' : ''}" title="Show only ${label.toLowerCase()} posts">
-          <span class="dot dot--${k}"></span>${label} <b>${s[k]}%</b></button>`).join('')}
-      </div>
+    <div class="moodbar${estimate ? ' is-estimate' : ''}" role="img" aria-label="${estimate ? 'Keyword estimate: ' : ''}positive ${s.positive}%, neutral ${s.neutral}%, negative ${s.negative}%">
+      ${rows.map(([k, c]) => `<span class="${c}" style="width:${s[k]}%"></span>`).join('')}
+    </div>
+    <div class="legend">
+      ${rows.map(([k, , label]) => `<button type="button" data-sent="${k}" class="${feedFilter.sent === k ? 'is-on' : ''}" aria-pressed="${feedFilter.sent === k}">
+        <b>${s[k]}%</b> ${label}</button>`).join('')}
+      <span class="legend__hint">Click a mood to see those posts</span>
     </div>`;
 }
 
 function wireLegend() {
-  $('aiBody').querySelectorAll('.legend button').forEach(btn => {
+  $('leadMood').querySelectorAll('.legend button').forEach(btn => {
     btn.onclick = () => {
       setSentFilter(feedFilter.sent === btn.dataset.sent ? '' : btn.dataset.sent);
       $('feed').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -504,7 +570,46 @@ function wireLegend() {
 
 function resetFeedFilter() {
   feedFilter = { sent: '', source: '', sort: $('sortSelect').value || 'popular', shown: FEED_PAGE };
-  $('sourceFilter').value = '';
+}
+
+// Source filter: '' = all, 'o:<outlet>' = one outlet (Yle, r/finland…), 'p:<platform id>' = a whole platform
+function matchesSource(p, src) {
+  if (!src) return true;
+  return src.startsWith('p:') ? p.platform === src.slice(2) : outletOf(p) === src.slice(2);
+}
+
+function setSourceFilter(src) {
+  feedFilter.source = src;
+  feedFilter.shown = FEED_PAGE;
+  renderFeed();
+}
+
+// The outlets themselves as buttons: the biggest ones up front, the long tail in a "More" menu
+function renderSourceChips(all) {
+  const counts = new Map();
+  for (const p of all) counts.set(outletOf(p), (counts.get(outletOf(p)) || 0) + 1);
+  const outlets = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const box = $('sourceChips');
+  box.hidden = outlets.length < 2;
+  if (box.hidden) return;
+
+  const src = feedFilter.source;
+  const front = outlets.slice(0, SOURCE_CHIPS);
+  const rest = outlets.slice(SOURCE_CHIPS);
+  const chip = (value, label, n) =>
+    `<button type="button" class="src-chip${src === value ? ' is-on' : ''}" data-src="${esc(value)}" aria-pressed="${src === value}">${esc(label)} <span class="muted">${n}</span></button>`;
+
+  let html = chip('', 'All', all.length) + front.map(([name, n]) => chip(`o:${name}`, name, n)).join('');
+  // A platform picked from "Mood by source" gets its own chip so it can be seen and cleared
+  if (src.startsWith('p:')) html += chip(src, `All of ${platformName(src.slice(2))}`, all.filter(p => matchesSource(p, src)).length);
+  if (rest.length) {
+    const inRest = rest.some(([name]) => src === `o:${name}`);
+    html += `<select class="src-more${inRest ? ' is-on' : ''}" aria-label="More sources">
+      <option value="">More (${rest.length})…</option>
+      ${rest.map(([name, n]) => `<option value="${esc(`o:${name}`)}"${src === `o:${name}` ? ' selected' : ''}>${esc(name)} (${n})</option>`).join('')}
+    </select>`;
+  }
+  box.innerHTML = html;
 }
 
 function setSentFilter(sent) {
@@ -519,16 +624,11 @@ function renderFeed() {
   $('feed').hidden = !all.length;
   if (!all.length) return;
 
-  // Source dropdown
-  const ids = [...new Set(all.map(p => p.platform))];
-  $('sourceFilter').innerHTML = `<option value="">All sources (${all.length})</option>` + ids.map(id =>
-    `<option value="${esc(id)}">${esc(platformName(id))} (${all.filter(p => p.platform === id).length})</option>`).join('');
-  $('sourceFilter').value = feedFilter.source;
-
+  renderSourceChips(all);
   $('sentFilter').querySelectorAll('.chip').forEach(c => c.classList.toggle('is-on', c.dataset.sent === feedFilter.sent));
 
   const filtered = sortPosts(all.filter(p =>
-    (!feedFilter.sent || p._sent === feedFilter.sent) && (!feedFilter.source || p.platform === feedFilter.source)
+    (!feedFilter.sent || p._sent === feedFilter.sent) && matchesSource(p, feedFilter.source)
   ), feedFilter.sort);
 
   $('feedCount').textContent = filtered.length === all.length ? `(${all.length})` : `(${filtered.length} of ${all.length})`;
@@ -541,17 +641,18 @@ function renderFeed() {
     const showSnippet = snippet && snippet !== p.title && !p.title.startsWith(snippet.slice(0, 60));
     const kws = p.metadata?.keywords || (p.metadata?.keyword ? [p.metadata.keyword] : []);
     return `
-      <li class="item item--${p._sent}">
+      <li class="item">
         <a class="item__title" href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+        ${showSnippet ? `<p class="item__snippet">${esc(snippet.slice(0, 240))}${snippet.length > 240 ? '…' : ''}</p>` : ''}
         <div class="item__meta">
+          ${moodTag(p)}
+          ${p._reason ? `<span class="reason">${esc(p._reason)}</span>` : ''}
           <span class="item__src">${esc(sourceLabel(p))}</span>
           <span>${timeAgo(p._time)}</span>
           ${engagementLabel(p) ? `<span>${engagementLabel(p)}</span>` : ''}
           ${p.author && p.author !== 'unknown' ? `<span>by ${esc(p.author)}</span>` : ''}
           ${multiKeyword ? kws.map(k => `<span class="tag">${esc(k)}</span>`).join('') : ''}
-          <span class="item__mood" title="${esc(moodTitle(p))}"><span class="dot dot--${p._sent}"></span>${p._sent}${p._ai ? '' : '*'}${p._reason ? `<span class="item__reason"> — ${esc(p._reason)}</span>` : ''}</span>
         </div>
-        ${showSnippet ? `<p class="item__snippet">${esc(snippet.slice(0, 240))}${snippet.length > 240 ? '…' : ''}</p>` : ''}
       </li>`;
   }).join('') || `<li class="ai-foot">No posts match these filters.</li>`;
 
@@ -644,9 +745,9 @@ function sourceLabel(p) {
 function engagementLabel(p) {
   const e = p.engagement || {};
   const parts = [];
-  if (e.score) parts.push(`↑ ${compact(e.score)}`);
-  if (e.comments) parts.push(`💬 ${compact(e.comments)}`);
-  return parts.join('  ');
+  if (e.score) parts.push(`${compact(e.score)} points`);
+  if (e.comments) parts.push(`${compact(e.comments)} comments`);
+  return parts.join(', ');
 }
 
 // ── Ask the results ────────────────────────────────────────────────────────────
@@ -975,9 +1076,9 @@ function renderBySource() {
   }
 
   const pct = (x, n) => Math.round((x / n) * 100);
-  const clickable = bySourceMode === 'platform';
+  const srcOf = r => (bySourceMode === 'platform' ? 'p:' : 'o:') + r.key;
   $('bySourceRows').innerHTML = rows.map(r => `
-    <div class="mbar${clickable && r.key ? ' is-clickable' : ''}" ${clickable && r.key ? `data-platform="${esc(r.key)}" role="button" tabindex="0" title="Show only ${esc(r.name)} posts"` : ''}>
+    <div class="mbar${r.key ? ' is-clickable' : ''}" ${r.key ? `data-src="${esc(srcOf(r))}" role="button" tabindex="0" title="Show only ${esc(r.name)} posts"` : ''}>
       <span class="mbar__name">${esc(r.name)}</span>
       <span class="mbar__track" role="img" aria-label="${esc(r.name)}: ${MOODS.map(([k, l]) => `${l.toLowerCase()} ${pct(r[k], r.n)}%`).join(', ')}">
         ${MOODS.filter(([k]) => r[k]).map(([k, l]) => `<span class="mbar__seg seg-${k}" style="flex-grow:${r[k]}"
@@ -1002,14 +1103,12 @@ function wireBySource() {
     if (current) renderBySource();
   }));
   const pick = row => {
-    feedFilter.source = row.dataset.platform;
-    feedFilter.shown = FEED_PAGE;
-    renderFeed();
+    setSourceFilter(row.dataset.src);
     $('feed').scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
-  $('bySourceRows').addEventListener('click', e => { const row = e.target.closest('.mbar[data-platform]'); if (row) pick(row); });
+  $('bySourceRows').addEventListener('click', e => { const row = e.target.closest('.mbar[data-src]'); if (row) pick(row); });
   $('bySourceRows').addEventListener('keydown', e => {
-    const row = e.target.closest('.mbar[data-platform]');
+    const row = e.target.closest('.mbar[data-src]');
     if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick(row); }
   });
 }
@@ -1215,7 +1314,7 @@ function renderSourceSettings() {
         ${k.configured ? '' : `
           <div class="source-key">
             <input type="password" data-key="${p.id}" placeholder="${saved ? '•••••• saved (paste to replace, clear to remove)' : 'Paste API key'}" autocomplete="off" aria-label="${esc(p.displayName)} API key" />
-            <a class="ghost-btn" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
+            <a class="btn btn--quiet" href="${safeUrl(k.signupUrl)}" target="_blank" rel="noopener">Get key</a>
           </div>`}
       </div>`;
   }).join('');
@@ -1254,16 +1353,14 @@ async function loadAIStatus() {
     const s = await fetch('/api/analytics/status').then(r => r.json());
     aiStatus = s;
     if (current) renderAI();
-    const label = s.nvidia ? `NVIDIA · ${(s.nvidiaModel || '').split('/').pop()}`
-      : s.gemini ? `Gemini · ${s.geminiModel}`
-      : s.available ? `Ollama · ${s.model}` : 'offline';
-    $('aiPill').textContent = `AI: ${label}`;
-    $('aiPill').classList.toggle('is-ok', Boolean(s.nvidia || s.gemini || s.available));
+    renderAIModelChoice();
     const geminiNote = (s.gemini ? ` Gemini (<code>${esc(s.geminiModel)}</code>) is set up as backup and for comparison.` : '')
+      + (s.custom ? ` Your own model, ${esc(s.customName)} (<code>${esc(s.customModel)}</code>), is set up too.` : '')
       + (s.localModel ? ` If the cloud AI doesn't answer, an offline model (<code>${esc(s.localModel)}</code>) labels the moods.` : '');
     $('aiInfo').innerHTML = s.nvidia
       ? `Using NVIDIA NIM (<code>${esc(s.nvidiaModel)}</code>)${s.available ? `, falling back to local Ollama (<code>${esc(s.model)}</code>)` : ''}.${geminiNote}`
       : s.gemini ? `Using Google Gemini (<code>${esc(s.geminiModel)}</code>).`
+      : s.custom ? `Using your own model, ${esc(s.customName)} (<code>${esc(s.customModel)}</code>).`
       : s.available
         ? `Using local Ollama (<code>${esc(s.model)}</code>). Set <code>NVIDIA_API_KEY</code> on the server for faster, better analysis.`
         : `No AI provider reachable. Set <code>NVIDIA_API_KEY</code> (free at build.nvidia.com) or start Ollama. Search still works; mood is then estimated from keywords.`;
@@ -1272,11 +1369,51 @@ async function loadAIStatus() {
   }
 }
 
+/** Which models can be picked: a cloud model needs its key in .env, the offline one must be switched on. */
+function aiModelOptions(s = aiStatus || {}) {
+  return [
+    { id: 'auto', label: 'Automatic (recommended)', ok: true, pill: s.nvidia ? `NVIDIA · ${(s.nvidiaModel || '').split('/').pop()}` : s.gemini ? `Gemini · ${s.geminiModel}`
+      : s.custom ? `${s.customName} · ${(s.customModel || '').split('/').pop()}` : s.available ? `Ollama · ${s.model}` : 'offline' },
+    { id: 'nvidia', label: 'NVIDIA NIM', ok: s.nvidia, missing: 'needs NVIDIA_API_KEY', pill: `NVIDIA · ${(s.nvidiaModel || '').split('/').pop()} only` },
+    { id: 'gemini', label: 'Google Gemini', ok: s.gemini, missing: 'needs GEMINI_API_KEY', pill: `Gemini · ${s.geminiModel} only` },
+    { id: 'custom', label: s.custom ? `${s.customName} · ${s.customModel.split('/').pop()}` : 'Your own model', ok: s.custom, missing: 'set CUSTOM_AI_URL in .env', pill: `${s.customName} · ${(s.customModel || '').split('/').pop()} only` },
+    { id: 'local', label: 'Offline model (moods only, no summary)', ok: Boolean(s.localModel), missing: 'switched off', pill: 'offline model only' },
+  ];
+}
+
+/** The saved choice if that model is available, otherwise 'auto'. Before /status answers, trust the setting. */
+function activeModel() {
+  if (!aiStatus) return settings.aiModel || 'auto';
+  return aiModelOptions().find(o => o.id === settings.aiModel && o.ok)?.id || 'auto';
+}
+
+function renderAIModelChoice() {
+  const opts = aiModelOptions();
+  $('aiModel').innerHTML = opts.map(o =>
+    `<option value="${o.id}"${o.ok ? '' : ' disabled'}>${esc(o.label)}${o.ok ? '' : ` (${o.missing})`}</option>`).join('');
+  // A model that went away (key removed) falls back to Automatic
+  const chosen = opts.find(o => o.id === settings.aiModel && o.ok) || opts[0];
+  $('aiModel').value = chosen.id;
+  $('aiPill').textContent = `AI: ${chosen.pill}`;
+  $('aiPill').classList.toggle('is-ok', chosen.id !== 'auto' || Boolean(aiStatus?.nvidia || aiStatus?.gemini || aiStatus?.custom || aiStatus?.available));
+  $('aiModelHint').textContent = {
+    auto: `Tries NVIDIA first, then Gemini${aiStatus?.custom ? `, then ${aiStatus.customName}` : ''}, then the offline model, so you always get a result.`,
+    nvidia: 'Only NVIDIA. If it fails there is no fallback.',
+    gemini: "Only Gemini. The free tier allows about 20 analyses a day, and if it fails there is no fallback.",
+    custom: `Only ${aiStatus?.customName || 'your own model'} (${aiStatus?.customModel || ''}), set up in .env. If it fails there is no fallback.`,
+    local: `Runs on this server with no API key (${aiStatus?.localModel || ''}). Fast, but it gives no reasons, summary or themes.`,
+  }[chosen.id];
+}
+
 // ── Side-by-side model comparison ──────────────────────────────────────────────
-const COMPARE_PROVIDERS = [
-  { id: 'nvidia', name: 'NVIDIA NIM' },
-  { id: 'gemini', name: 'Google Gemini' },
-];
+/** Every configured LLM provider; the comparison runs all of them. */
+function compareProviders() {
+  return [
+    { id: 'nvidia', name: 'NVIDIA NIM', short: 'NVIDIA', ok: aiStatus?.nvidia },
+    { id: 'gemini', name: 'Google Gemini', short: 'Gemini', ok: aiStatus?.gemini },
+    { id: 'custom', name: aiStatus?.customName || 'Custom model', short: aiStatus?.customName || 'custom model', ok: aiStatus?.custom },
+  ].filter(p => p.ok);
+}
 const SENT_NAME = { pos: 'positive', neu: 'neutral', neg: 'negative' };
 
 /** Runs each provider on exactly the same posts and prompts, with no fallback between them. */
@@ -1284,14 +1421,14 @@ async function runCompare() {
   if (!current?.results.length) return;
   const seq = searchSeq;
   const posts = aiPosts(current.results);
-  compare = { seq, posts, results: {} };
-  for (const p of COMPARE_PROVIDERS) compare.results[p.id] = { state: 'loading' };
+  compare = { seq, posts, providers: compareProviders(), results: {} };
+  for (const p of compare.providers) compare.results[p.id] = { state: 'loading' };
   $('compare').hidden = false;
   renderCompare();
   $('compare').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const body = { keyword: current.query || undefined, language: settings.aiLanguage, posts: slimForAI(posts) };
-  await Promise.all(COMPARE_PROVIDERS.map(async p => {
+  await Promise.all(compare.providers.map(async p => {
     const started = Date.now();
     let result;
     try {
@@ -1315,8 +1452,8 @@ async function runCompare() {
 
 function renderCompare() {
   if (!compare) return;
-  const cols = COMPARE_PROVIDERS.map(p => compareColumn(p, compare.results[p.id])).join('');
-  $('compareBody').innerHTML = `<div class="compare__cols">${cols}</div>${compareAgreement()}`;
+  const cols = compare.providers.map(p => compareColumn(p, compare.results[p.id])).join('');
+  $('compareBody').innerHTML = `<div class="compare__cols" style="--cols:${compare.providers.length}">${cols}</div>${compareAgreement()}`;
 }
 
 function compareColumn(p, r = { state: 'loading' }) {
@@ -1338,46 +1475,49 @@ function compareColumn(p, r = { state: 'loading' }) {
       </div>
       <p class="cmp-pcts"><span class="dot dot--positive"></span>${s.positive}% <span class="dot dot--neutral"></span>${s.neutral}% <span class="dot dot--negative"></span>${s.negative}%</p>
       ${a.summary ? `<div class="ai-block"><h3>Summary</h3><p>${esc(a.summary)}</p></div>` : ''}
-      ${a.opinion ? `<div class="ai-block"><h3>Opinion</h3><p class="opinion">${esc(a.opinion)}</p></div>` : ''}
+      ${a.opinion ? `<aside class="take"><h3>Its take</h3><p>${esc(a.opinion)}</p></aside>` : ''}
       ${a.themes?.length ? `<div class="ai-block"><h3>Themes</h3><div class="themes">${a.themes.map(t => `<span class="theme">${esc(t)}</span>`).join('')}</div></div>` : ''}
     </div>`;
 }
 
+/** Agreement between the models that finished: posts every one of them labelled, and where they differ. */
 function compareAgreement() {
-  const [A, B] = COMPARE_PROVIDERS.map(p => compare.results[p.id]);
-  if (A?.state !== 'done' || B?.state !== 'done') return '';
-  const la = A.data.articleLabels || [], lb = B.data.articleLabels || [];
-  const ra = A.data.articleReasons || [], rb = B.data.articleReasons || [];
-  let both = 0, same = 0, opposite = 0;
+  const done = compare.providers.filter(p => compare.results[p.id]?.state === 'done');
+  if (done.length < 2 || done.length < compare.providers.filter(p => compare.results[p.id]?.state !== 'error').length) return '';
+  const labels = done.map(p => compare.results[p.id].data.articleLabels || []);
+  const reasons = done.map(p => compare.results[p.id].data.articleReasons || []);
+  let all = 0, same = 0, opposite = 0;
   const diffs = [];
   compare.posts.forEach((post, i) => {
-    if (!la[i] || !lb[i]) return;
-    both++;
-    if (la[i] === lb[i]) { same++; return; }
-    const isOpposite = (la[i] === 'pos' && lb[i] === 'neg') || (la[i] === 'neg' && lb[i] === 'pos');
+    const ls = labels.map(l => l[i]);
+    if (ls.some(l => !l)) return;
+    all++;
+    if (ls.every(l => l === ls[0])) { same++; return; }
+    // Opposite: one model says positive where another says negative
+    const isOpposite = ls.includes('pos') && ls.includes('neg');
     if (isOpposite) opposite++;
-    diffs.push({ post, a: la[i], b: lb[i], ra: ra[i], rb: rb[i], isOpposite });
+    diffs.push({ post, ls, rs: reasons.map(r => r[i]), isOpposite });
   });
   diffs.sort((x, y) => Number(y.isOpposite) - Number(x.isOpposite));
-  const pct = both ? Math.round((100 * same) / both) : 0;
-  const cell = (l, r) => `<span class="dot dot--${SENT_NAME[l]}"></span>${SENT_NAME[l]}${r ? `<span class="item__reason"> — ${esc(r)}</span>` : ''}`;
+  const pct = all ? Math.round((100 * same) / all) : 0;
+  const cell = (l, r) => `<span class="dot dot--${SENT_NAME[l]}"></span>${SENT_NAME[l]}${r ? `<br><span class="reason">${esc(r)}</span>` : ''}`;
+  const who = done.length === 2 ? 'Both models' : `All ${done.length} models`;
 
   return `
     <div class="agree">
       <div class="agree__score"><b>${pct}%</b> agreement</div>
-      <p class="hint">Both models labelled ${both} posts and gave the same mood to ${same}.
-        ${diffs.length} differ${opposite ? `, ${opposite} of them in opposite directions (one says positive, the other negative)` : ''}.
-        Differences are where the mood is genuinely debatable, or where one model misread the post.</p>
+      <p class="hint">${who} labelled ${all} posts and gave the same mood to ${same}.
+        ${diffs.length} differ${opposite ? `, ${opposite} of them in opposite directions (one says positive, another negative)` : ''}.
+        Differences are where the mood is genuinely debatable, or where a model misread the post.</p>
     </div>
     ${diffs.length ? `
     <div class="diff-wrap">
       <table class="diff">
-        <thead><tr><th>Post</th><th>${COMPARE_PROVIDERS[0].name}</th><th>${COMPARE_PROVIDERS[1].name}</th></tr></thead>
+        <thead><tr><th>Post</th>${done.map(p => `<th>${esc(p.name)}</th>`).join('')}</tr></thead>
         <tbody>${diffs.map(d => `
           <tr class="${d.isOpposite ? 'is-opposite' : ''}">
             <td><a href="${safeUrl(d.post.url)}" target="_blank" rel="noopener">${esc(d.post.title)}</a></td>
-            <td>${cell(d.a, d.ra)}</td>
-            <td>${cell(d.b, d.rb)}</td>
+            ${d.ls.map((l, k) => `<td>${cell(l, d.rs[k])}</td>`).join('')}
           </tr>`).join('')}
         </tbody>
       </table>
@@ -1515,7 +1655,7 @@ function timeAgo(t) {
 
 function setBusy(busy) {
   $('searchBtn').disabled = busy;
-  $('searchBtn').textContent = busy ? 'Searching…' : 'Search';
+  $('searchBtn').textContent = busy ? 'Searching…' : 'Read the mood';
 }
 
 let toastTimer;
@@ -1547,7 +1687,11 @@ $('sentFilter').addEventListener('click', e => {
   const chip = e.target.closest('.chip');
   if (chip) setSentFilter(chip.dataset.sent);
 });
-$('sourceFilter').addEventListener('change', () => { feedFilter.source = $('sourceFilter').value; feedFilter.shown = FEED_PAGE; renderFeed(); });
+$('sourceChips').addEventListener('click', e => {
+  const chip = e.target.closest('.src-chip');
+  if (chip) setSourceFilter(chip.dataset.src === feedFilter.source ? '' : chip.dataset.src);
+});
+$('sourceChips').addEventListener('change', e => { if (e.target.matches('.src-more')) setSourceFilter(e.target.value); });
 $('sortSelect').addEventListener('change', () => { feedFilter.sort = $('sortSelect').value; renderFeed(); });
 $('moreBtn').addEventListener('click', () => { feedFilter.shown += FEED_PAGE; renderFeed(); });
 
@@ -1557,6 +1701,30 @@ $('closeSettings').addEventListener('click', () => openSettings(false));
 $('scrim').addEventListener('click', () => openSettings(false));
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { openSettings(false); openFilters(false); }
+});
+
+// Theme: the <head> script already applied the saved choice before first paint
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll('[data-theme-choice]').forEach(b => {
+    b.classList.toggle('is-on', b.dataset.themeChoice === theme);
+    b.setAttribute('aria-checked', String(b.dataset.themeChoice === theme));
+  });
+}
+applyTheme(settings.theme === 'dark' ? 'dark' : 'light');
+$('themeChoice').addEventListener('click', e => {
+  const b = e.target.closest('[data-theme-choice]');
+  if (!b) return;
+  settings.theme = b.dataset.themeChoice;
+  saveSettings();
+  applyTheme(settings.theme);
+});
+
+$('aiModel').addEventListener('change', () => {
+  settings.aiModel = $('aiModel').value;
+  saveSettings();
+  renderAIModelChoice();
+  if (current?.results.length) { openSettings(false); runAI(); }
 });
 
 $('aiLanguage').value = settings.aiLanguage || 'en';
