@@ -1,10 +1,10 @@
 # EchoFlow
 
-![EchoFlow front page: a search box asking "What is everyone saying about…", quick topic buttons, and a three-step "How it works"](docs/images/frontpage.png)
+![EchoFlow's mood report for "Finland": 242 posts from Finnish papers, the verdict "Mostly neutral; the rest tilts negative", a mood bar, the AI's summary and take, themes, and the mood by outlet](docs/images/report.png)
 
 > One search box for news and social media. Type a topic, see the most-talked-about posts, and let the AI sum up the mood and give its own take. Zero cloud cost.
 
-EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News and free news APIs from [public-apis](https://github.com/public-apis/public-apis#news) in parallel. It analyses the results with NVIDIA NIM (free cloud) or local Ollama and shows everything on a single page, colour-coded by mood. Everything runs in Docker: one command and you're up.
+EchoFlow searches Reddit, Hacker News, Bluesky, Lemmy, Google News, Finnish newspapers (Yle, HS, Ilta-Sanomat, Iltalehti, Kaleva…) and free news APIs from [public-apis](https://github.com/public-apis/public-apis#news) in parallel. An AI reads every post: NVIDIA NIM or Google Gemini on their free tiers, your own OpenAI-compatible model, or, with no key at all, an offline Hugging Face model. Everything is shown on a single page, colour-coded by mood. Everything runs in Docker: one command and you're up.
 
 EchoFlow is a school project for an AI course. **How the AI part works, how we chose the model and what we learned about prompting: [docs/ai-design.md](docs/ai-design.md).**
 
@@ -279,6 +279,8 @@ Quick-search buttons can attach a curated feed bundle (World, Finland, Tech, Gam
 ## The UI
 
 A single page at `http://localhost:3000`:
+
+![EchoFlow front page: a search box asking "What is everyone saying about…", quick topic buttons, and a three-step "How it works"](docs/images/frontpage.png)
 
 1. **Search bar.** Comma-separated topics (`News, Finland`) are each searched across every enabled source.
    The **filter button** (sliders icon) next to it sets the time range, results per source and which sources to search, e.g. only the New York Times. A number on the button shows how many filters differ from the defaults; changing them re-runs the current search.
